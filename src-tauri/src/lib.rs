@@ -52,6 +52,7 @@ pub fn run() {
             commands::start_download,
             commands::start_translate,
             commands::start_process,
+            commands::cookies_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Format, ProcessRequest, ProcessResponse } from './types';
+import type { CookieInfo, Format, ProcessRequest, ProcessResponse } from './types';
 
 export async function fetchFormats(
   url: string,
@@ -58,6 +58,10 @@ export async function pickCookiesFile(): Promise<string | null> {
     multiple: false,
     filters: [{ name: 'Cookies', extensions: ['txt'] }],
   });
+}
+
+export async function cookiesInfo(path: string): Promise<CookieInfo> {
+  return await invoke<CookieInfo>('cookies_info', { path });
 }
 
 export async function pickOutputDir(): Promise<string | null> {

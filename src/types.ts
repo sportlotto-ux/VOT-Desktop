@@ -31,3 +31,8 @@ export type AppError = {
   kind: 'invalid_input' | 'subprocess' | 'io' | 'tauri';
   message: string;
 };
+
+export interface CookieInfo {
+  path: string;
+  modified_secs: number | null;
+}

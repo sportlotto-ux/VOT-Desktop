@@ -1,7 +1,15 @@
 import type { Format } from './types';
-import { fetchFormats, startProcess, pickCookiesFile, pickOutputDir } from './ipc';
+import { listen } from '@tauri-apps/api/event';
+import {
+  fetchFormats,
+  startProcess,
+  pickCookiesFile,
+  pickOutputDir,
+  cookiesInfo,
+} from './ipc';
 
 const DEFAULT_OUTPUT_DIR = '~/Videos/VotDesktop';
+const STALE_COOKIES_DAYS = 30;
 
 let currentFormats: Format[] = [];
 let cookiesPath: string | null = null;
@@ -14,6 +22,7 @@ const $ = <T extends HTMLElement>(id: string): T =>
 export function init(): void {
   render();
   bindEvents();
+  bindRuntimeListeners();
 }
 
 function render(): void {
@@ -67,9 +76,15 @@ function render(): void {
           <span id="output-path" class="value">${DEFAULT_OUTPUT_DIR}</span>
           <button id="output-btn" class="small">Choose...</button>
         </div>
+
+        <div class="option-row">
+          <span class="label">ffmpeg</span>
+          <span id="ffmpeg-status" class="value">checking...</span>
+        </div>
       </section>
 
       <button id="process-btn" disabled class="primary">Start</button>
+      <div class="hint">Enter — скачать · Ctrl+V — вставить URL</div>
 
       <div id="progress-section" class="hidden">
         <label>Progress</label>
@@ -77,6 +92,10 @@ function render(): void {
         <span id="progress-text"></span>
       </div>
 
+      <div id="log-header" class="log-header hidden">
+        <span class="label">Log</span>
+        <button id="log-clear" class="small">Clear</button>
+      </div>
       <pre id="log-area" class="hidden"></pre>
       <div id="error-box" class="error hidden"></div>
       <div id="result-box" class="result hidden"></div>
@@ -90,9 +109,54 @@ function bindEvents(): void {
   $<HTMLButtonElement>('cookies-clear').addEventListener('click', onClearCookies);
   $<HTMLButtonElement>('output-btn').addEventListener('click', onPickOutput);
   $<HTMLButtonElement>('process-btn').addEventListener('click', onProcess);
+  $<HTMLButtonElement>('log-clear').addEventListener('click', clearLog);
 
-  $<HTMLInputElement>('url-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') onFetch();
+  const urlInput = $<HTMLInputElement>('url-input');
+  urlInput.addEventListener('input', () => {
+    $<HTMLButtonElement>('fetch-btn').disabled = urlInput.value.trim() === '';
+  });
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if ($<HTMLButtonElement>('process-btn').disabled) {
+        onFetch();
+      } else {
+        onProcess();
+      }
+    }
+  });
+
+  // Ctrl+V — вставить URL в поле ввода из буфера обмена.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'v') return;
+    if (isProcessing) return;
+    const target = e.target as HTMLElement | null;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    const input = $<HTMLInputElement>('url-input');
+    navigator.clipboard
+      .readText()
+      .then((text) => {
+        input.value = text.trim();
+        $<HTMLButtonElement>('fetch-btn').disabled = input.value === '';
+        input.focus();
+      })
+      .catch(() => {
+        input.focus();
+      });
+  });
+}
+
+function bindRuntimeListeners(): void {
+  // Backend signals ffmpeg availability after startup (ADR-002).
+  void listen<string>('ffmpeg-status', (event) => {
+    const el = $<HTMLElement>('ffmpeg-status');
+    el.textContent = event.payload;
+    el.classList.remove('missing');
+  });
+  void listen<string>('ffmpeg-missing', (event) => {
+    const el = $<HTMLElement>('ffmpeg-status');
+    el.textContent = event.payload;
+    el.classList.add('missing');
   });
 }
 
@@ -282,14 +346,33 @@ async function onPickCookies(): Promise<void> {
   const path = await pickCookiesFile();
   if (path) {
     cookiesPath = path;
-    $<HTMLElement>('cookies-status').textContent = path.split('/').pop()!;
+    const status = $<HTMLElement>('cookies-status');
+    const name = path.split('/').pop()!;
+    try {
+      const info = await cookiesInfo(path);
+      const when = info.modified_secs != null ? formatAge(info.modified_secs) : '?';
+      const stale =
+        info.modified_secs != null &&
+        Date.now() / 1000 - info.modified_secs > STALE_COOKIES_DAYS * 86400;
+      status.textContent = `${name} (${when})`;
+      status.classList.toggle('stale', stale);
+      status.title = stale
+        ? 'Cookies файл устарел — экспортируйте свежий из браузера'
+        : `Изменён: ${new Date(info.modified_secs! * 1000).toLocaleString()}`;
+    } catch {
+      status.textContent = name;
+      status.classList.remove('stale');
+    }
     $<HTMLButtonElement>('cookies-clear').classList.remove('hidden');
   }
 }
 
 function onClearCookies(): void {
   cookiesPath = null;
-  $<HTMLElement>('cookies-status').textContent = 'none';
+  const status = $<HTMLElement>('cookies-status');
+  status.textContent = 'none';
+  status.classList.remove('stale');
+  status.title = '';
   $<HTMLButtonElement>('cookies-clear').classList.add('hidden');
 }
 
@@ -303,6 +386,16 @@ async function onPickOutput(): Promise<void> {
 
 function enableProcess(): void {
   $<HTMLButtonElement>('process-btn').disabled = false;
+}
+
+function formatAge(secs: number): string {
+  const days = Math.max(0, Math.floor((Date.now() / 1000 - secs) / 86400));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} mo ago`;
+  return `${Math.floor(months / 12)} y ago`;
 }
 
 // ---- Process ----
@@ -386,9 +479,18 @@ function clearProgress(): void {
 }
 
 function log(line: string): void {
+  const header = $<HTMLElement>('log-header');
   const area = $<HTMLElement>('log-area');
+  header.classList.remove('hidden');
   area.classList.remove('hidden');
   area.textContent += line + '\n';
+  area.scrollTop = area.scrollHeight;
+}
+
+function clearLog(): void {
+  $<HTMLElement>('log-area').textContent = '';
+  $<HTMLElement>('log-header').classList.add('hidden');
+  $<HTMLElement>('log-area').classList.add('hidden');
 }
 
 function showError(err: unknown): void {

@@ -309,7 +309,7 @@ fn validate_format_id(id: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn validate_cookies_path(path: &Path) -> AppResult<()> {
+pub(crate) fn validate_cookies_path(path: &Path) -> AppResult<()> {
     const MAX_COOKIES_BYTES: u64 = 10 * 1024 * 1024;
     let meta = std::fs::symlink_metadata(path).map_err(|_| {
         AppError::InvalidInput(format!("cookies file not found: {}", path.display()))

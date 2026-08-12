@@ -113,6 +113,29 @@ pub struct ProcessRequest {
     pub do_translate: bool,
 }
 
+#[derive(Serialize)]
+pub struct CookieInfo {
+    pub path: String,
+    pub modified_secs: Option<i64>,
+}
+
+/// Return the last-modified time of a cookies file so the UI can warn
+/// when the cookie file is stale (ADR-005).
+#[tauri::command]
+pub fn cookies_info(path: String) -> AppResult<CookieInfo> {
+    let p = PathBuf::from(&path);
+    downloader::validate_cookies_path(&p)?;
+    let modified_secs = std::fs::symlink_metadata(&p)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+    Ok(CookieInfo {
+        path,
+        modified_secs,
+    })
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));

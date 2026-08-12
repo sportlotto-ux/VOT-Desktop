@@ -98,6 +98,12 @@ button.primary:hover {
   background: #357abd;
 }
 
+.hint {
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+}
+
 .options-section .option-row {
   display: flex;
   align-items: center;
@@ -124,6 +130,15 @@ button.primary:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.options-section .value.missing {
+  color: #a02020;
+  white-space: normal;
+}
+
+.options-section .value.stale {
+  color: #c07000;
 }
 
 progress {
@@ -157,8 +172,20 @@ progress::-webkit-progress-value {
   font-family: 'Fira Code', 'Cascadia Code', monospace;
   font-size: 11px;
   overflow-x: auto;
+  overflow-y: auto;
   max-height: 200px;
   line-height: 1.4;
+  margin: 0;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.log-header .label {
+  margin-bottom: 0;
 }
 
 #format-section {
