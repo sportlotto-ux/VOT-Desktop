@@ -97,6 +97,8 @@ vot-desktop/
 
 ### ADR-002: Гибридный AppImage — bundle deno, require system ffmpeg
 
+**Целевые дистрибутивы: rolling-сборки (Fedora, Arch, openSUSE Tumbleweed, Ubuntu 24.04+/Debian 13+).** Старые LTS (Ubuntu 22.04 и ниже) **не поддерживаются**: бинарь линкуется с glibc хоста сборки (≥2.39), сборка в старом контейнере не требуется.
+
 **Решение:** В AppImage бандлим:
 - Tauri-бинарь (~8 МБ)
 - `yt-dlp` (статический, ~15 МБ) — редко обновляется, автообновление внутри yt-dlp
@@ -465,7 +467,7 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 Проект считается завершённым, когда:
 
 - [ ] `scripts/build-appimage.sh` создаёт AppImage без warnings
-- [ ] AppImage запускается на чистой Ubuntu 22.04 в podman-контейнере
+- [ ] AppImage запускается на чистом rolling-дистрибутиве (Fedora/Arch; Ubuntu 24.04+ как fallback) в podman-контейнере
 - [ ] Без ffmpeg на хосте — приложение показывает модалку с командой установки и exit (НЕ крашится)
 - [ ] С ffmpeg — полный цикл: URL → выбор качества → скачивание → VOT → микс → готовый файл
 - [ ] Smoke-test проходит: известный URL → готовый `.mixed.<ext>` за <10 мин
@@ -488,10 +490,11 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 | 1.0 | 2026-07-20 | Первая версия |
 | 1.1 | 2026-07-20 | Ревью feedback (ADR-002 → гибридный AppImage; сроки x1.5-2 без опыта Tauri; секция «Безопасность subprocess»; build.rs sha256 для mixer.rs) |
 | 1.2 | 2026-08-12 | Фазы 1–4 реализованы: pinned бинарники (ADR-006), sandboxed VOT (ADR-007), work-dir + fallback (ADR-008), typed pipeline (ADR-009), codec-aware mix (ADR-010); UI-полировка (hotkeys, cookies age, ffmpeg status) |
+| 1.3 | 2026-08-12 | Решение по фаза 5: rolling-only дистрибутивы, старые LTS не поддерживаются (glibc ≥2.39) |
 
 ---
 
-**Текущая версия документа:** 1.2
+**Текущая версия документа:** 1.3
 **Дата:** 2026-08-12
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)
