@@ -246,6 +246,35 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 - YouTube-стримы (av01/h264/vp9) упаковываются корректно; smoke-test повторяет логику выбора контейнера
 - Требуется ffprobe (в составе ffmpeg); unit-тесты `vp9_maps_to_webm` / `h264_and_unknown_map_to_mp4`
 
+### ADR-011: TypeScript 7 (native Go-компилятор)
+
+**Решение:** typescript 5.6 → 7.0.2. TS7 — нативная (Go) реализация, используется только для typecheck (`tsc --noEmit`); транспиляция остаётся на esbuild (Vite 8). Добавлен `src/vite-env.d.ts` с `/// <reference types="vite/client" />` — TS7, в отличие от TS5, не прощает CSS side-effect import (TS2882).
+
+**Последствия:**
+- Быстрый typecheck, тот же `tsconfig.json`
+- Vite-специфичные модули (CSS-импорты) требуют `vite/client` деклараций
+- pin `^7.0.2` в package.json
+
+### ADR-012: Thin AppImage — external yt-dlp/deno, runtime download
+
+**Решение:** yt-dlp и deno **не бандлятся** в AppImage (тонкий, ~88MB). Резолв при запуске (src-tauri/src/binaries.rs):
+1. системный бинарь из `PATH` (пользователь обновил сам — новая версия подхватывается без пересборки приложения);
+2. кэш `~/.cache/votdesktop/binaries` (pinned, уже скачан);
+3. скачивание pinned-версии (yt-dlp 2026.07.04, deno 2.9.5) с **обязательной sha256-проверкой** (архив и бинарь для deno).
+
+**Причина:** выпуск нового yt-dlp/deno не должен требовать пересборки AppImage. Пользователь обновляет системный пакет — приложение подхватывает его; если его нет — приложение само ставит pinned версию в кэш.
+
+**Альтернативы:**
+- Bundled (ADR-006) — отвергнуто: каждый выход deno/yt-dlp требует пересборки контейнера
+- Только системные, без скачивания — отвергнуто: на чистой системе приложение неработоспособно без deno
+
+**Последствия:**
+- AppImage: 88MB (было 156MB), .deb: 2.3MB
+- Первый запуск без deno/yt-dlp требует сеть + ~10-30s (скачивание + sha256)
+- Нет bundled-бинарей → `bundle.resources` в tauri.conf.json пуст
+- `build-appimage.sh` больше не вызывает fetch-скрипты; `SKIP_FETCH` удалён
+- Сетевые тесты скачивания — `#[ignore]` (opt-in, не ломают офлайн-CI)
+
 ## 6. Фазы разработки
 
 Каждая фаза — атомарная, имеет критерий «готово». **Не переходить к следующей фазе, пока не выполнен критерий.**
@@ -493,10 +522,11 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 | 1.3 | 2026-08-12 | Решение по фаза 5: rolling-only дистрибутивы, старые LTS не поддерживаются (glibc ≥2.39) |
 | 1.4 | 2026-08-12 | TypeScript 5.6 → 7.0 (native Go-компилятор); добавлен src/vite-env.d.ts для CSS side-effect импорта |
 | 1.5 | 2026-08-12 | AppImage перепакован с xz/1M сжатием (177→156MB, −12%); linuxdeploy zstd/16K блочит размер |
+| 1.6 | 2026-08-12 | ADR-012: тонкий AppImage (88MB) — external yt-dlp/deno, runtime-скачивание в ~/.cache/votdesktop/binaries с sha256 |
 
 ---
 
-**Текущая версия документа:** 1.5
+**Текущая версия документа:** 1.6
 **Дата:** 2026-08-12
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)

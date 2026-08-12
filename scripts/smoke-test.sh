@@ -5,8 +5,8 @@
 #
 # Требует:
 #   - ffmpeg в PATH
-#   - yt-dlp в PATH (или bundled)
-#   - deno в PATH (или bundled) для VOT
+#   - yt-dlp в PATH или ~/.cache/votdesktop/binaries
+#   - deno в PATH или ~/.cache/votdesktop/binaries для VOT
 #   - VOT_MEDIABOT_SRC (опционально)
 set -euo pipefail
 
@@ -17,6 +17,7 @@ OUT_DIR="${2:-/tmp/vot-desktop-smoke}"
 APPIMAGE="src-tauri/target/release/bundle/appimage/VotDesktop_0.1.0_amd64.AppImage"
 BINARY="src-tauri/target/release/vot_desktop"
 YTDLP="${YTDLP_BIN:-}"
+CACHE_BIN="${HOME}/.cache/votdesktop/binaries"
 
 if [[ -z "${URL}" ]]; then
   echo "Usage: $0 <youtube_url> [output_dir]" >&2
@@ -33,10 +34,10 @@ fi
 if [[ -z "${YTDLP}" ]]; then
   if command -v yt-dlp >/dev/null 2>&1; then
     YTDLP="$(command -v yt-dlp)"
-  elif [[ -x "src-tauri/binaries/yt-dlp-x86_64-x86_64-unknown-linux-gnu" ]]; then
-    YTDLP="src-tauri/binaries/yt-dlp-x86_64-x86_64-unknown-linux-gnu"
+  elif [[ -x "${CACHE_BIN}/yt-dlp" ]]; then
+    YTDLP="${CACHE_BIN}/yt-dlp"
   else
-    echo "ERROR: yt-dlp not found in PATH or src-tauri/binaries" >&2
+    echo "ERROR: yt-dlp not found in PATH or ${CACHE_BIN}" >&2
     exit 1
   fi
 fi
@@ -49,10 +50,10 @@ fi
 if [[ -z "${DENO:-}" ]]; then
   if command -v deno >/dev/null 2>&1; then
     DENO="$(command -v deno)"
-  elif [[ -x "src-tauri/binaries/deno-x86_64-x86_64-unknown-linux-gnu" ]]; then
-    DENO="src-tauri/binaries/deno-x86_64-x86_64-unknown-linux-gnu"
+  elif [[ -x "${CACHE_BIN}/deno" ]]; then
+    DENO="${CACHE_BIN}/deno"
   else
-    echo "ERROR: deno not found in PATH or src-tauri/binaries" >&2
+    echo "ERROR: deno not found in PATH or ${CACHE_BIN}" >&2
     exit 1
   fi
 fi

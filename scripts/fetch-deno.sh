@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Скачивает зафиксированный static-бинарь deno в src-tauri/binaries/.
-# Используется в AppImage для запуска vot-cli-live (npm-пакет).
+# Опционально: предзагружает pinned deno в ~/.cache/votdesktop/binaries,
+# чтобы первый запуск прошёл без сети. В рантайме приложение само качает
+# его с sha256-проверкой (ADR-012); скрипт — для офлайн-прекэша.
 #
 # Использование: scripts/fetch-deno.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DEST_DIR="src-tauri/binaries"
-DEST="${DEST_DIR}/deno-x86_64-x86_64-unknown-linux-gnu"
+DEST_DIR="${HOME}/.cache/votdesktop/binaries"
+DEST="${DEST_DIR}/deno"
 VERSION="2.9.5"
 URL="https://github.com/denoland/deno/releases/download/v${VERSION}/deno-x86_64-unknown-linux-gnu.zip"
 ARCHIVE_SHA256="8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530"

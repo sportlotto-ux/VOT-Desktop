@@ -1,6 +1,6 @@
 //! VotDesktop — Tauri backend entrypoint.
 
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 mod binaries;
 mod commands;
@@ -18,10 +18,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            if let Ok(resource_dir) = app.path().resource_dir() {
-                crate::binaries::init_resource_dir(resource_dir);
-            }
-
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Скачивает зафиксированный static-бинарь yt-dlp в src-tauri/binaries/.
-# Запускать перед сборкой AppImage (Фаза 5). В dev-режиме используется
-# системный yt-dlp из PATH.
+# Опционально: предзагружает pinned yt-dlp в ~/.cache/votdesktop/binaries,
+# чтобы первый запуск прошёл без сети. В рантайме приложение само качает
+# его с sha256-проверкой (ADR-012); скрипт — для офлайн-прекэша.
 #
 # Использование: scripts/fetch-yt-dlp.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DEST_DIR="src-tauri/binaries"
-DEST="${DEST_DIR}/yt-dlp-x86_64-x86_64-unknown-linux-gnu"
+DEST_DIR="${HOME}/.cache/votdesktop/binaries"
+DEST="${DEST_DIR}/yt-dlp"
 VERSION="2026.07.04"
 URL="https://github.com/yt-dlp/yt-dlp/releases/download/${VERSION}/yt-dlp_linux"
 SHA256="6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae"

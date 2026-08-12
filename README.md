@@ -56,8 +56,8 @@ VOT_MEDIABOT_SRC=/path/to/mediabot2.0/src/handlers/media_utils.ts \
 
 - **patchelf ≥0.16** обязателен на хосте (`sudo dnf install patchelf`). Без него `linuxdeploy` корраптит `.init` секции в `.so`
 - **VOT_MEDIABOT_SRC** — опциональный путь к `media_utils.py` для build-time sha256-валидации filter_complex (ADR-003). Если не задан — soft-fail
-- **deno** и **yt-dlp** скачиваются на этапе сборки из зафиксированных release assets с проверкой SHA-256 и бандлятся в AppImage/.deb. В dev-режиме используются системные версии
-- `SKIP_FETCH=1` разрешен только при наличии бинарников с ожидаемыми checksum
+- **deno** и **yt-dlp** НЕ бандлятся в AppImage (тонкий, ~88MB, ADR-012). При запуске: используются системные из `PATH`, иначе скачиваются pinned-версии с sha256-проверкой в `~/.cache/votdesktop/binaries`. Первый запуск без них требует сеть (~10-30s)
+- `scripts/fetch-deno.sh` / `scripts/fetch-yt-dlp.sh` — опционально предзагружают кэш до первого запуска
 
 ### Проверка качества
 
