@@ -46,6 +46,26 @@ npm ci
 echo ">> npm run tauri:build"
 npm run tauri:build
 
+# ---- 6b. Перепаковка AppImage с xz-сжатием ----
+# linuxdeploy-plugin-appimage пакует squashfs с zstd и block 16K, что даёт
+# ~177MB. xz с block 1M сжимает лучше (~156MB, −12%) — перепаковываем из
+# готового AppDir. Проверено: работает, время ~45s.
+APPIMAGETOOL="$(command -v appimagetool || true)"
+APPIMAGE_OUT="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)"
+APPDIR="src-tauri/target/release/bundle/appimage/VotDesktop.AppDir"
+
+if [[ -n "${APPIMAGETOOL}" && -n "${APPIMAGE_OUT}" && -d "${APPDIR}" ]]; then
+  echo ">> Repacking ${APPIMAGE_OUT} with xz/1M compression..."
+  ARCH=x86_64 "${APPIMAGETOOL}" --comp xz \
+    --mksquashfs-opt="-b" --mksquashfs-opt="1048576" \
+    --no-appstream "${APPDIR}" "${APPIMAGE_OUT}.xz" > /dev/null
+  mv -f "${APPIMAGE_OUT}.xz" "${APPIMAGE_OUT}"
+  chmod +x "${APPIMAGE_OUT}"
+  echo ">> Repacked: $(ls -lh "${APPIMAGE_OUT}" | awk '{print $5}')"
+else
+  echo ">> SKIP repack: appimagetool or AppDir missing"
+fi
+
 # ---- 7. Результат ----
 echo ""
 echo "Build artifacts:"

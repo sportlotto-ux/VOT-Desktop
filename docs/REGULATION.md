@@ -492,10 +492,11 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 | 1.2 | 2026-08-12 | Фазы 1–4 реализованы: pinned бинарники (ADR-006), sandboxed VOT (ADR-007), work-dir + fallback (ADR-008), typed pipeline (ADR-009), codec-aware mix (ADR-010); UI-полировка (hotkeys, cookies age, ffmpeg status) |
 | 1.3 | 2026-08-12 | Решение по фаза 5: rolling-only дистрибутивы, старые LTS не поддерживаются (glibc ≥2.39) |
 | 1.4 | 2026-08-12 | TypeScript 5.6 → 7.0 (native Go-компилятор); добавлен src/vite-env.d.ts для CSS side-effect импорта |
+| 1.5 | 2026-08-12 | AppImage перепакован с xz/1M сжатием (177→156MB, −12%); linuxdeploy zstd/16K блочит размер |
 
 ---
 
-**Текущая версия документа:** 1.4
+**Текущая версия документа:** 1.5
 **Дата:** 2026-08-12
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)
