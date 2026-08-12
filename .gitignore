@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.codebase-memory/
+.DS_Store
+*.log
+.env
+.env.local
+
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+
+*.AppImage
+*.deb
+*.rpm
