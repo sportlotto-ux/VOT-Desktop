@@ -27,7 +27,7 @@
 | Слой | Технология | Версия | Обоснование |
 |---|---|---|---|
 | GUI Framework | Tauri | 2.x | Маленький бинарь, нативный WebView, Rust-perf |
-| Frontend | TypeScript + Vite | TS 5.x | Без фреймворков (vanilla) — минимум зависимостей |
+| Frontend | TypeScript + Vite | TS 7.x | Без фреймворков (vanilla) — минимум зависимостей |
 | Backend IPC | Tauri Commands (Rust) | — | Прямой вызов Rust-функций из TS |
 | Downloader | yt-dlp (системный или bundled) | latest | Стандарт de-facto |
 | VOT Translation | vot-cli-live (npm) | 1.7.x | Уже используется в mediabot2.0 |
@@ -491,10 +491,11 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 | 1.1 | 2026-07-20 | Ревью feedback (ADR-002 → гибридный AppImage; сроки x1.5-2 без опыта Tauri; секция «Безопасность subprocess»; build.rs sha256 для mixer.rs) |
 | 1.2 | 2026-08-12 | Фазы 1–4 реализованы: pinned бинарники (ADR-006), sandboxed VOT (ADR-007), work-dir + fallback (ADR-008), typed pipeline (ADR-009), codec-aware mix (ADR-010); UI-полировка (hotkeys, cookies age, ffmpeg status) |
 | 1.3 | 2026-08-12 | Решение по фаза 5: rolling-only дистрибутивы, старые LTS не поддерживаются (glibc ≥2.39) |
+| 1.4 | 2026-08-12 | TypeScript 5.6 → 7.0 (native Go-компилятор); добавлен src/vite-env.d.ts для CSS side-effect импорта |
 
 ---
 
-**Текущая версия документа:** 1.3
+**Текущая версия документа:** 1.4
 **Дата:** 2026-08-12
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)
