@@ -1,5 +1,6 @@
 //! VotDesktop — Tauri backend entrypoint.
 
+use std::path::PathBuf;
 use tauri::Emitter;
 
 mod binaries;
@@ -12,6 +13,7 @@ mod pipeline;
 mod process;
 mod translator;
 mod types;
+mod updates;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,6 +42,18 @@ pub fn run() {
                 }
             });
 
+            // Background update check (rate-limited to once/day).
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let cache_root = binaries::cache_file_for("").parent().map(PathBuf::from);
+                if let Some(root) = cache_root {
+                    let updates = crate::updates::check_updates(&root).await;
+                    if !updates.is_empty() {
+                        let _ = app_handle.emit("update-available", &updates);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,6 +63,8 @@ pub fn run() {
             commands::start_translate,
             commands::start_process,
             commands::cookies_info,
+            commands::check_updates,
+            commands::update_binary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

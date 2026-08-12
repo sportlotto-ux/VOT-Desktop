@@ -1,4 +1,4 @@
-import type { Format } from './types';
+import type { Format, UpdateInfo } from './types';
 import { listen } from '@tauri-apps/api/event';
 import {
   fetchFormats,
@@ -6,6 +6,7 @@ import {
   pickCookiesFile,
   pickOutputDir,
   cookiesInfo,
+  updateBinary,
 } from './ipc';
 
 const DEFAULT_OUTPUT_DIR = '~/Videos/VotDesktop';
@@ -83,6 +84,14 @@ function render(): void {
         </div>
       </section>
 
+      <section id="update-section" class="hidden">
+        <div class="option-row">
+          <span class="label">Updates</span>
+          <span id="update-status" class="value"></span>
+          <button id="update-btn" class="small">Update</button>
+        </div>
+      </section>
+
       <button id="process-btn" disabled class="primary">Start</button>
       <div class="hint">Enter — скачать · Ctrl+V — вставить URL</div>
 
@@ -110,6 +119,7 @@ function bindEvents(): void {
   $<HTMLButtonElement>('output-btn').addEventListener('click', onPickOutput);
   $<HTMLButtonElement>('process-btn').addEventListener('click', onProcess);
   $<HTMLButtonElement>('log-clear').addEventListener('click', clearLog);
+  $<HTMLButtonElement>('update-btn').addEventListener('click', onUpdateBinary);
 
   const urlInput = $<HTMLInputElement>('url-input');
   urlInput.addEventListener('input', () => {
@@ -158,6 +168,50 @@ function bindRuntimeListeners(): void {
     el.textContent = event.payload;
     el.classList.add('missing');
   });
+
+  // Available runtime binary updates (yt-dlp/deno), ADR-012.
+  void listen<UpdateInfo[]>('update-available', (event) => {
+    pendingUpdates = event.payload;
+    renderUpdates();
+  });
+}
+
+let pendingUpdates: UpdateInfo[] = [];
+let updatingName: string | null = null;
+
+function renderUpdates(): void {
+  const section = $<HTMLElement>('update-section');
+  const status = $<HTMLElement>('update-status');
+  const btn = $<HTMLButtonElement>('update-btn');
+
+  const target = pendingUpdates.find((u) => u.name === updatingName) ?? pendingUpdates[0];
+  if (!target) {
+    section.classList.add('hidden');
+    return;
+  }
+  section.classList.remove('hidden');
+  btn.textContent = updatingName === target.name && updatingName ? 'Updating...' : 'Update';
+  btn.disabled = updatingName !== null;
+  const cur = target.current ? `v${target.current}` : 'none';
+  status.textContent = `${target.name}: ${cur} → v${target.latest}`;
+}
+
+async function onUpdateBinary(): Promise<void> {
+  const target = pendingUpdates[0];
+  if (!target || updatingName) return;
+  updatingName = target.name;
+  renderUpdates();
+  try {
+    const installed = await updateBinary(target.name);
+    pendingUpdates = pendingUpdates.filter((u) => u.name !== target.name);
+    log(`${target.name} updated to v${installed}`);
+  } catch (err: unknown) {
+    showError(err);
+    log(`update failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    updatingName = null;
+    renderUpdates();
+  }
 }
 
 // ---- Fetch ----

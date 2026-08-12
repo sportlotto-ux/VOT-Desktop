@@ -36,3 +36,9 @@ export interface CookieInfo {
   path: string;
   modified_secs: number | null;
 }
+
+export interface UpdateInfo {
+  name: string;
+  current: string | null;
+  latest: string;
+}

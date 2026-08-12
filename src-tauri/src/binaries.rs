@@ -38,6 +38,25 @@ pub async fn ensure_deno() -> AppResult<PathBuf> {
     resolve("deno", DENO_MIN_VERSION).await
 }
 
+/// Version currently in use (PATH first, then cache), if any.
+pub async fn current_version(name: &str) -> Option<String> {
+    if let Some(system) = find_in_path(name) {
+        if let Some(v) = probe_version(&system).await {
+            return Some(v);
+        }
+    }
+    let cached = cache_dir().join(name);
+    if cached.is_file() {
+        return probe_version(&cached).await;
+    }
+    None
+}
+
+/// Path where a runtime binary is stored in the cache (also used by updates.rs).
+pub fn cache_file_for(name: &str) -> PathBuf {
+    cache_dir().join(name)
+}
+
 // ---- Internal ----
 
 async fn resolve(name: &str, minimum_version: &str) -> AppResult<PathBuf> {
@@ -225,7 +244,7 @@ async fn probe_version(path: &Path) -> Option<String> {
     )
 }
 
-fn version_gte(cur: &str, min: &str) -> bool {
+pub(crate) fn version_gte(cur: &str, min: &str) -> bool {
     let cp: Vec<u64> = cur
         .split(|c: char| !c.is_ascii_digit())
         .filter_map(|p| p.parse().ok())

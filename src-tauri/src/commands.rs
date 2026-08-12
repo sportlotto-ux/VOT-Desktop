@@ -136,6 +136,23 @@ pub fn cookies_info(path: String) -> AppResult<CookieInfo> {
     })
 }
 
+/// Check (once/day) whether yt-dlp/deno have newer versions available.
+#[tauri::command]
+pub async fn check_updates() -> AppResult<Vec<crate::updates::UpdateInfo>> {
+    let cache_root = crate::binaries::cache_file_for("")
+        .parent()
+        .map(PathBuf::from);
+    let root =
+        cache_root.ok_or_else(|| crate::error::AppError::Subprocess("no cache dir".into()))?;
+    Ok(crate::updates::check_updates(&root).await)
+}
+
+/// Download the latest release of `name` (yt-dlp|deno) into the cache.
+#[tauri::command]
+pub async fn update_binary(name: String) -> AppResult<String> {
+    crate::updates::update_binary(&name).await
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
