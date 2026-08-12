@@ -183,6 +183,67 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 - ✅ Просто, прозрачно, как в Parabolic
 - ⚠️ Файл устаревает — показывать дату последней модификации в UI
 
+### ADR-006: Pinned bundled binaries — no runtime downloads
+
+**Решение:** yt-dlp (`2026.07.04`), deno (`2.9.5`), `vot-cli-live@1.7.5` закреплены версиями. `fetch-deno.sh`/`fetch-yt-dlp.sh` качают pinned архив+бинарь и проверяют sha256 (для deno — и бинарь, и архив). В рантайме `binaries.rs` резолвит bundled (`resource_dir/binaries`) или PATH с `probe_version` (≥ минимума). Runtime-загрузки (curl/unzip/`releases/latest`) удалены из Rust.
+
+**Альтернативы:**
+- latest + автообновление — отвергнуто: supply-chain риск, ломающие версии
+- Только системные бинарники — отвергнуто: deno ни у кого нет, yt-dlp версии расходятся
+
+**Последствия:**
+- Воспроизводимые сборки; `build-appimage.sh` поддерживает `SKIP_FETCH=1` с проверкой checksum
+- AppImage: `bundle.resources` = `binaries/{deno,yt-dlp}`; bump версии = осознанное действие + обновление sha256
+
+### ADR-007: Sandboxed VOT subprocess — env_clear + scoped permissions
+
+**Решение:** `vot-cli-live` через deno с минимальными правами:
+- deno: `--allow-net`, `--allow-env`, scoped `--allow-read=<work_dir>,<HOME>/.cache/deno`, scoped `--allow-write=<work_dir>`
+- `env_clear()` + whitelist: `PATH=/usr/bin:/bin`, `HOME`, `TERM=xterm`, `CI=1`, `FORCE_COLOR=1`
+- Опытным путём: `vot-cli-live` (chalk/colorette/listr2) требует env-доступ; deno пишет npm-кэш без явного `allow-write`; нужен read кэша для своего package.json
+
+**Альтернативы:**
+- `--allow-all` — отвергнуто: полный доступ
+- Scoped `--allow-env=NAME` — отвергнуто: whack-a-mole, список переменных нестабилен
+
+**Последствия:**
+- Минимальная поверхность атаки для произвольного URL; `VOT_TIMEOUT=300s` + `kill_on_drop`
+- Требуется HOME в env для deno-кэша; `work_dir` изолирует вывод
+
+### ADR-008: Isolated work-dir model + graceful VOT fallback
+
+**Решение:** при переводе загрузка идёт в уникальную work-директорию (`.vot-process-{pid}-{attempt}`); финал (mixed) — в `output_dir`; `work_dir` чистится всегда (в т.ч. при ошибке). Поток: video stream (`video_only_format`) → audio (`bestaudio[ext=m4a]/bestaudio`) → translation (в свой `.vot-work-*`) → mix → `output_dir/{stem}.mixed.{ext}`. Fallback: если `vot-cli-live` чисто завершился, но перевода нет (`"not found"` → `Ok(None)`) — качаем комбинированный формат (`format_with_best_audio`) в `output_dir` и возвращаем видео без микса.
+
+**Альтернативы:**
+- Всё в `output_dir` — отвергнуто: мусор при падении
+- Жёсткая ошибка без fallback — отвергнуто: UX-регресс
+
+**Последствия:**
+- Частичные стримы не просачиваются в пользовательскую папку; fallback сохраняет ценность результата
+
+### ADR-009: Typed pipeline — ProcessContext / SelectionKind / Artifact
+
+**Решение:** оркестрация из `commands.rs` перенесена в `pipeline.rs` (`run_process` → `run_video`/`run_audio`). UI-события за трейтом `PipelineEvents` (impl `tauri::Window`, mock в тестах). Артефакты — типизированные `Artifact { path, kind: ArtifactKind }` (Video/Audio/Translation/Mixed); `ProcessResponse` строится через `Artifact::into_response()` по kind. Эвристика «audio-only по строке format_id» удалена — фронт явно шлёт `SelectionKind` (video|audio, serde snake_case).
+
+**Альтернативы:**
+- Монолитный `start_process` с эвристиками — отвергнуто: 150+ строк, хрупко, нетестируемо
+- События через window прямо в pipeline — отвергнуто: не тестируется без Tauri
+
+**Последствия:**
+- `commands.rs` — тонкая обёртка; 10 Rust unit-тестов; поле `request.kind` обязательно с фронта
+
+### ADR-010: Codec-aware mix output container
+
+**Решение:** `mixer.mix()` сам выбирает контейнер/аудиокодек по видеокодеку (`probe_video_codec` → `output_profile`): vp8/vp9 → webm + libopus; остальное (h264, av1, unknown) → mp4 + aac. Видео всегда `-c:v copy`. Выход: `output_dir/{stem}.mixed.{container}`; `mix()` возвращает `PathBuf`.
+
+**Альтернативы:**
+- Всегда mp4+aac — отвергнуто: vp8/vp9 копией в mp4 ломаются
+- Транскодировать видео — отвергнуто: потеря качества/время
+
+**Последствия:**
+- YouTube-стримы (av01/h264/vp9) упаковываются корректно; smoke-test повторяет логику выбора контейнера
+- Требуется ffprobe (в составе ffmpeg); unit-тесты `vp9_maps_to_webm` / `h264_and_unknown_map_to_mp4`
+
 ## 6. Фазы разработки
 
 Каждая фаза — атомарная, имеет критерий «готово». **Не переходить к следующей фазе, пока не выполнен критерий.**
@@ -426,10 +487,11 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 |---|---|---|
 | 1.0 | 2026-07-20 | Первая версия |
 | 1.1 | 2026-07-20 | Ревью feedback (ADR-002 → гибридный AppImage; сроки x1.5-2 без опыта Tauri; секция «Безопасность subprocess»; build.rs sha256 для mixer.rs) |
+| 1.2 | 2026-08-12 | Фазы 1–4 реализованы: pinned бинарники (ADR-006), sandboxed VOT (ADR-007), work-dir + fallback (ADR-008), typed pipeline (ADR-009), codec-aware mix (ADR-010); UI-полировка (hotkeys, cookies age, ffmpeg status) |
 
 ---
 
-**Текущая версия документа:** 1.1
-**Дата:** 2026-07-20
+**Текущая версия документа:** 1.2
+**Дата:** 2026-08-12
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)
