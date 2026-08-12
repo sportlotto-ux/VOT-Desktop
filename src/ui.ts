@@ -316,6 +316,7 @@ async function onProcess(): Promise<void> {
 
   const dir = outputDir ?? DEFAULT_OUTPUT_DIR;
   const doTranslate = $<HTMLInputElement>('mix-check').checked;
+  const kind: 'video' | 'audio' = currentType === 'Audio only' ? 'audio' : 'video';
   isProcessing = true;
 
   const btn = $<HTMLButtonElement>('process-btn');
@@ -336,6 +337,7 @@ async function onProcess(): Promise<void> {
     const result = await startProcess(
       url,
       formatId,
+      kind,
       dir,
       doTranslate,
       cookiesPath ?? undefined,

@@ -8,7 +8,7 @@
 |---|---|---|
 | G1 | Скачивать видео с YouTube в выбранном качестве | Работает без кук и с куками (как Parabolic) |
 | G2 | Получать русский голосовой перевод через VOT | MP3 от `vot-cli-live` в течение 5 мин |
-| G3 | Микшировать оригинал + перевод в один файл | Готовый `.mixed.mp4`, оба голоса слышны |
+| G3 | Микшировать оригинал + перевод в один файл | Готовый `.mixed.<ext>`, оба голоса слышны |
 | G4 | Поставляться одним файлом (AppImage) | `chmod +x && ./VotDesktop.AppImage` — работает |
 | G5 | Не зависеть от mediabot2.0 в runtime | Self-contained, никаких импортов из bot |
 
@@ -65,7 +65,7 @@ vot-desktop/
 │   ├── dev.sh                     # запуск в dev-режиме
 │   ├── build-appimage.sh          # сборка .AppImage
 │   ├── fetch-yt-dlp.sh            # скачать static yt-dlp в binaries/
-│   └── smoke-test.sh              # e2e: URL → готовый .mixed.mp4
+│   └── smoke-test.sh              # e2e: URL → готовый .mixed.<ext>
 ├── tests/
 │   ├── unit/
 │   │   ├── mixer.test.ts          # парсинг аргументов ffmpeg
@@ -240,7 +240,7 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 - `src-tauri/build.rs` — проверка sha256 источника filter_complex, fail-build при изменении (см. ADR-003)
 
 **Критерий готово:**
-- На вход: `video.mp4` + `ru.mp3` → на выходе: `video.mixed.mp4`
+- На вход: `video.mp4` + `ru.mp3` → на выходе: `video.mixed.mp4` (или `webm`, если видеокодек vp8/vp9)
 - В `video.mixed.mp4` оба голоса слышны (ru громче, en тише на фоне)
 - Длительность совпадает с оригиналом
 - При изменении `media_utils.py` в mediabot2.0 — `cargo build` падает с подсказкой «обнови MIXER_PRESET_VERSION»
@@ -407,7 +407,7 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 - [ ] AppImage запускается на чистой Ubuntu 22.04 в podman-контейнере
 - [ ] Без ffmpeg на хосте — приложение показывает модалку с командой установки и exit (НЕ крашится)
 - [ ] С ffmpeg — полный цикл: URL → выбор качества → скачивание → VOT → микс → готовый файл
-- [ ] Smoke-test проходит: известный URL → готовый `.mixed.mp4` за <10 мин
+- [ ] Smoke-test проходит: известный URL → готовый `.mixed.<ext>` за <10 мин
 - [ ] Без cookies: публичные видео скачиваются
 - [ ] С cookies: приватные/age-restricted видео скачиваются
 - [ ] VOT-перевод получается для видео из кэша Яндекса

@@ -8,6 +8,7 @@ mod deps;
 mod downloader;
 mod error;
 mod mixer;
+mod pipeline;
 mod process;
 mod translator;
 mod types;

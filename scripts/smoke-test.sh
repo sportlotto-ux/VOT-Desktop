@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Smoke-test: URL -> готовый .mixed.mp4 (end-to-end конвейер).
+# Smoke-test: URL -> готовый .mixed.<ext> (end-to-end конвейер).
+# Контейнер результата (mp4/webm) выбирается по видеокодеку, как в mixer.rs.
 # Использование: scripts/smoke-test.sh <youtube_url> [output_dir]
 #
 # Требует:
@@ -98,17 +99,29 @@ fi
 echo ">> [5/5] Mixing video + original audio + translation..."
 VIDEO="$(find "${WORK_DIR}" -maxdepth 1 -name 'video.*' | head -1)"
 AUDIO="$(find "${WORK_DIR}" -maxdepth 1 -name 'audio.*' | head -1)"
+
+# Выбор контейнера по видеокодеку — повторяет output_profile() из mixer.rs.
+CODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${VIDEO}")"
+if [[ "${CODEC}" == "vp8" || "${CODEC}" == "vp9" ]]; then
+  CONTAINER="webm"
+  AUDIO_CODEC="libopus"
+else
+  CONTAINER="mp4"
+  AUDIO_CODEC="aac"
+fi
+MIXED="${OUT_DIR}/mixed.${CONTAINER}"
+
 ffmpeg -v error -i "${VIDEO}" -i "${AUDIO}" -i "${TRANSLATION}" \
   -filter_complex "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100,volume=0.33[en];[2:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100,pan=stereo|c0=c0|c1=c0[ru];[ru][en]amix=inputs=2:duration=longest:normalize=0[mix]" \
-  -map 0:v -map "[mix]" -c:v copy -c:a aac -b:a 192k -y "${OUT_DIR}/mixed.mp4"
+  -map 0:v -map "[mix]" -c:v copy -c:a "${AUDIO_CODEC}" -b:a 192k -y "${MIXED}"
 
-if [[ ! -f "${OUT_DIR}/mixed.mp4" ]]; then
-  echo ">> Smoke-test FAILED: no mixed.mp4 produced"
+if [[ ! -f "${MIXED}" ]]; then
+  echo ">> Smoke-test FAILED: no ${MIXED} produced"
   exit 1
 fi
 
 rm -rf "${WORK_DIR}"
 
 echo ""
-echo ">> Smoke-test PASSED: ${OUT_DIR}/mixed.mp4"
-ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 "${OUT_DIR}/mixed.mp4"
+echo ">> Smoke-test PASSED: ${MIXED} (video codec: ${CODEC})"
+ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 "${MIXED}"

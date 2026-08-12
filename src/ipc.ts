@@ -15,6 +15,7 @@ export async function fetchFormats(
 export async function startProcess(
   url: string,
   formatId: string,
+  kind: 'video' | 'audio',
   outputDir: string,
   doTranslate: boolean,
   cookiesPath?: string,
@@ -24,6 +25,7 @@ export async function startProcess(
   const req: ProcessRequest = {
     url,
     format_id: formatId,
+    kind,
     output_dir: outputDir,
     do_translate: doTranslate,
   };

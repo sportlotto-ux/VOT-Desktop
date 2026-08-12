@@ -15,6 +15,7 @@ export interface FetchFormatsRequest {
 export interface ProcessRequest {
   url: string;
   format_id: string;
+  kind: 'video' | 'audio';
   output_dir: string;
   cookies_path?: string;
   do_translate: boolean;
