@@ -1,13 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { CookieInfo, Format, ProcessRequest, ProcessResponse, UpdateInfo } from './types';
+import type { CookieInfo, FetchFormatsResponse, ProcessRequest, ProcessResponse, UpdateInfo } from './types';
 
 export async function fetchFormats(
   url: string,
   cookiesPath?: string,
-): Promise<Format[]> {
-  return await invoke<Format[]>('fetch_formats', {
+): Promise<FetchFormatsResponse> {
+  return await invoke<FetchFormatsResponse>('fetch_formats', {
     request: { url, cookies_path: cookiesPath },
   });
 }
@@ -18,7 +18,11 @@ export async function startProcess(
   kind: 'video' | 'audio',
   outputDir: string,
   doTranslate: boolean,
-  cookiesPath?: string,
+  options?: {
+    cookiesPath?: string;
+    description?: string;
+    aiApiKey?: string;
+  },
   onStep?: (msg: string) => void,
   onProgress?: (pct: number) => void,
 ): Promise<ProcessResponse> {
@@ -29,8 +33,14 @@ export async function startProcess(
     output_dir: outputDir,
     do_translate: doTranslate,
   };
-  if (cookiesPath) {
-    req.cookies_path = cookiesPath;
+  if (options?.cookiesPath) {
+    req.cookies_path = options.cookiesPath;
+  }
+  if (options?.description) {
+    req.description = options.description;
+  }
+  if (options?.aiApiKey) {
+    req.ai_api_key = options.aiApiKey;
   }
 
   const unlistenStep = await listen<string>('process-step', (e) => {

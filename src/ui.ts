@@ -11,11 +11,17 @@ import {
 
 const DEFAULT_OUTPUT_DIR = '~/Videos/VotDesktop';
 const STALE_COOKIES_DAYS = 30;
+const AI_KEY_STORAGE = 'vot-ai-api-key';
 
 let currentFormats: Format[] = [];
+let currentDescription: string | null = null;
 let cookiesPath: string | null = null;
 let outputDir: string | null = null;
 let isProcessing = false;
+
+function getAiKey(): string {
+  return localStorage.getItem(AI_KEY_STORAGE)?.trim() ?? '';
+}
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -63,6 +69,17 @@ function render(): void {
         <div class="checkbox-row">
           <input type="checkbox" id="mix-check" checked />
           <label for="mix-check">Mix with Russian voice translation (VOT)</label>
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="desc-check" checked />
+          <label for="desc-check">Translate description to Russian (AI Studio)</label>
+        </div>
+
+        <div class="option-row">
+          <span class="label">AI key</span>
+          <input type="password" id="ai-key-input" class="text-input"
+            placeholder="Google AI Studio API key" autocomplete="off" />
         </div>
 
         <div class="option-row">
@@ -122,6 +139,11 @@ function bindEvents(): void {
   $<HTMLButtonElement>('update-btn').addEventListener('click', onUpdateBinary);
 
   const urlInput = $<HTMLInputElement>('url-input');
+  const aiKeyInput = $<HTMLInputElement>('ai-key-input');
+  aiKeyInput.value = localStorage.getItem(AI_KEY_STORAGE) ?? '';
+  aiKeyInput.addEventListener('input', () => {
+    localStorage.setItem(AI_KEY_STORAGE, aiKeyInput.value.trim());
+  });
   urlInput.addEventListener('input', () => {
     $<HTMLButtonElement>('fetch-btn').disabled = urlInput.value.trim() === '';
   });
@@ -225,7 +247,9 @@ async function onFetch(): Promise<void> {
   hideResult();
 
   try {
-    currentFormats = await fetchFormats(url, cookiesPath ?? undefined);
+    const response = await fetchFormats(url, cookiesPath ?? undefined);
+    currentFormats = response.formats;
+    currentDescription = response.description;
     setProgress(`Found ${currentFormats.length} formats`);
     populateSelectors(currentFormats);
     enableProcess();
@@ -481,13 +505,18 @@ async function onProcess(): Promise<void> {
   hideResult();
 
   try {
+    const aiKey = getAiKey();
     const result = await startProcess(
       url,
       formatId,
       kind,
       dir,
       doTranslate,
-      cookiesPath ?? undefined,
+      {
+        cookiesPath: cookiesPath ?? undefined,
+        description: currentDescription ?? undefined,
+        aiApiKey: aiKey || undefined,
+      },
       (msg) => {
         progressText.textContent = msg;
         log(msg);
@@ -508,6 +537,10 @@ async function onProcess(): Promise<void> {
         resultMsg += `\nTranslation: ${result.translation_path}`;
       }
       showResult(resultMsg);
+    }
+    if (currentDescription && getAiKey()) {
+      const folder = (result.mixed_path ?? result.video_path).replace(/[/\\][^/\\]+$/, '');
+      log(`Descriptions saved to ${folder} (description.txt / description.ru.txt)`);
     }
   } catch (err: unknown) {
     showError(err);

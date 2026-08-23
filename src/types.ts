@@ -7,9 +7,9 @@ export interface Format {
   has_audio: boolean;
 }
 
-export interface FetchFormatsRequest {
-  url: string;
-  cookies_path?: string;
+export interface FetchFormatsResponse {
+  formats: Format[];
+  description: string | null;
 }
 
 export interface ProcessRequest {
@@ -19,6 +19,8 @@ export interface ProcessRequest {
   output_dir: string;
   cookies_path?: string;
   do_translate: boolean;
+  description?: string;
+  ai_api_key?: string;
 }
 
 export interface ProcessResponse {
