@@ -31,9 +31,9 @@ pub async fn fetch_translation(video_url: &str, output_dir: &Path) -> AppResult<
 
     match result {
         Ok(Ok(result)) => Ok(result),
-        Ok(Err(AppError::Subprocess(msg))) if msg.contains("not found") => {
-            // vot-cli-live exits with "not found" when Yandex has no
-            // translation cached — this is a normal fallback.
+        Ok(Err(AppError::Subprocess(msg))) if is_no_translation(&msg) => {
+            // vot-cli-live exits with `Downloading failed! Link "..." not found`
+            // when Yandex has no translation cached — normal fallback.
             Ok(None)
         }
         Ok(Err(e)) => Err(e),
@@ -44,6 +44,15 @@ pub async fn fetch_translation(video_url: &str, output_dir: &Path) -> AppResult<
             ))
         }
     }
+}
+
+/// Match the exact shape of vot-cli-live's "no cached translation" failure:
+/// `Downloading failed! Link "..." not found`.
+/// A bare `contains("not found")` would also swallow unrelated infra errors
+/// ("Module not found", etc.), silently skipping real failures.
+fn is_no_translation(stderr_msg: &str) -> bool {
+    let m = stderr_msg.to_lowercase();
+    m.contains("downloading failed!") && m.contains("not found")
 }
 
 async fn run_vot_command(

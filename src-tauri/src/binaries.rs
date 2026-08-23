@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 
-const YTDLP_MIN_VERSION: &str = "2026.07.04";
-const DENO_MIN_VERSION: &str = "2.9.5";
+pub(crate) const YTDLP_MIN_VERSION: &str = "2026.07.04";
+pub(crate) const DENO_MIN_VERSION: &str = "2.9.5";
 
 const YTDLP_URL: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux";
@@ -170,7 +170,7 @@ async fn timeout_download(url: &str) -> AppResult<Vec<u8>> {
     .map_err(|_| AppError::Subprocess(format!("download of {url} timed out")))?
 }
 
-fn verify_sha256(bytes: &[u8], expected: &str, what: &str) -> AppResult<()> {
+pub(crate) fn verify_sha256(bytes: &[u8], expected: &str, what: &str) -> AppResult<()> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -193,7 +193,7 @@ fn file_sha256(path: &Path) -> AppResult<String> {
     Ok(actual.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn write_executable(path: &Path, bytes: &[u8]) -> AppResult<()> {
+pub(crate) fn write_executable(path: &Path, bytes: &[u8]) -> AppResult<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, bytes).map_err(AppError::Io)?;
     let mut perms = std::fs::metadata(path).map_err(AppError::Io)?.permissions();
@@ -202,7 +202,7 @@ fn write_executable(path: &Path, bytes: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
-fn extract_deno(zip_bytes: &[u8]) -> AppResult<Vec<u8>> {
+pub(crate) fn extract_deno(zip_bytes: &[u8]) -> AppResult<Vec<u8>> {
     let reader = std::io::Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader)
         .map_err(|e| AppError::Subprocess(format!("bad deno zip: {e}")))?;
@@ -231,7 +231,7 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     })
 }
 
-async fn probe_version(path: &Path) -> Option<String> {
+pub(crate) async fn probe_version(path: &Path) -> Option<String> {
     let out = Command::new(path).arg("--version").output().await.ok()?;
     if !out.status.success() {
         return None;
