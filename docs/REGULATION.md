@@ -527,10 +527,13 @@ const FILTER_COMPLEX: &str = "[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100
 | 1.5 | 2026-08-12 | AppImage перепакован с xz/1M сжатием (177→156MB, −12%); linuxdeploy zstd/16K блочит размер |
 | 1.6 | 2026-08-12 | ADR-012: тонкий AppImage (88MB) — external yt-dlp/deno, runtime-скачивание в ~/.cache/votdesktop/binaries с sha256 |
 | 1.7 | 2026-08-12 | ADR-012: обновления как в Parabolic — GitHub releases/latest 1×/сутки, кнопка Update, sha256 из релиза (updates.rs) |
+| 1.8 | 2026-08-23 | Security hardening: format_id argument injection закрыт, атомарные binary updates (tmp→verify→probe→rename), строгий VOT fallback, удалены мёртвые IPC-команды |
+| 1.9 | 2026-08-23 | Папка на видео (<title>_<ID>/), перевод описания через Gemini API (ручная кнопка, модель из ListModels), ретраи 5xx |
+| 2.0 | 2026-08-23 | Thin AppImage 3.1MB на системных webkit2gtk/GTK (бандл чужого дистрибутива давал белый webview); CI-release через GitHub Actions; aiera.uz баннер (opener) |
 
 ---
 
-**Текущая версия документа:** 1.7
-**Дата:** 2026-08-12
+**Текущая версия документа:** 2.0
+**Дата:** 2026-08-23
 **Автор:** Claude (opencode)
 **Связанные проекты:** mediabot2.0 (источник filter_complex и vot-cli-live команды)

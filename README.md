@@ -43,12 +43,19 @@ chmod +x VotDesktop_*.AppImage
 ## Использование
 
 1. Вставьте YouTube-ссылку
-2. Нажмите **Fetch Formats**
-3. Выберите контейнер (mp4/webm/mkv), тип (Video+Audio/Video/Audio) и качество
-4. Опционально: выберите cookies-файл и путь сохранения
-5. Включите чекбокс **Mix with Russian voice translation** для VOT+микширования
-6. Опционально: включите перевод описания и вставьте AI Studio ключ
-7. Нажмите **Start**
+2. Нажмите **Получить форматы**
+3. Выберите контейнер (mp4/webm/mkv), тип (Video+Audio / Video / Audio) и качество
+4. Опционально: выберите cookies-файл и папку загрузки
+5. Включите чекбокс **Микшировать с русской озвучкой (Яндекс VOT)** для перевода дорожки
+6. Нажмите **Скачать**
+
+### Перевод описания (опционально)
+
+1. Получите бесплатный ключ на [aistudio.google.com/apikey](https://aistudio.google.com/apikey) и вставьте его в поле **API-ключ** — список моделей подтянется автоматически
+2. Выберите модель в выпадающем списке
+3. После скачивания нажмите **Перевести описание** — перевод появится на экране и сохранится рядом с видео
+
+Временные сбои Gemini (503 перегрузка) обрабатываются автоматически — до 3 попыток с паузами.
 
 Результат — папка на каждое видео:
 
@@ -57,9 +64,15 @@ chmod +x VotDesktop_*.AppImage
 └── Название видео_<ID>/
     ├── Название видео_<ID>.mp4        # видео
     ├── ...mixed.webm                  # микс с переводом (если включён VOT)
-    ├── description.txt                # оригинальное описание
-    └── description.ru.txt             # перевод (если задан AI ключ)
+    └── description.ru.txt             # перевод описания (по кнопке)
 ```
+
+## Интерфейс
+
+- **Компоненты** — версии yt-dlp / deno / ffmpeg, проверяются при запуске
+- **Обновления** — раз в сутки приложение проверяет новые релизы yt-dlp/deno и предлагает обновиться одной кнопкой
+- Баннер в правом верхнем углу ведёт на [aiera.uz](https://aiera.uz)
+- Версия приложения показана в правом нижнем углу
 
 ## Разработка
 
@@ -68,20 +81,18 @@ chmod +x VotDesktop_*.AppImage
 sudo dnf install webkit2gtk4.1-devel openssl-devel patchelf
 
 # Запуск dev-режима
-VOT_MEDIABOT_SRC=/path/to/mediabot2.0/src/handlers/media_utils.ts \
-  npm run tauri:dev
+npm run tauri:dev
 
-# Сборка AppImage + deb
-VOT_MEDIABOT_SRC=/path/to/mediabot2.0/src/handlers/media_utils.ts \
-  bash scripts/build-appimage.sh
+# Сборка AppImage + deb (тонкий AppImage на системных библиотеках)
+bash scripts/build-appimage.sh
 ```
 
 ### Важные замечания
 
 - **patchelf ≥0.16** обязателен на хосте (`sudo dnf install patchelf`). Без него `linuxdeploy` корраптит `.init` секции в `.so`
-- **VOT_MEDIABOT_SRC** — опциональный путь к `media_utils.py` для build-time sha256-валидации filter_complex (ADR-003). Если не задан — soft-fail
 - **deno** и **yt-dlp** НЕ бандлятся в AppImage (тонкий, ~3MB). При запуске: используются системные из `PATH`, иначе скачиваются pinned-версии с sha256-проверкой в `~/.cache/votdesktop/binaries`. Первый запуск без них требует сеть (~10-30s)
 - AppImage также не бандлит webkit2gtk/GTK — используются системные библиотеки (иначе бандл из чужого дистрибутива даёт белый webview)
+- Детали архитектурных решений (ADR) и внутренние детали сборки — в [docs/REGULATION.md](docs/REGULATION.md)
 - `scripts/fetch-deno.sh` / `scripts/fetch-yt-dlp.sh` — опционально предзагружают кэш до первого запуска
 
 ### Проверка качества
