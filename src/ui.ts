@@ -1,6 +1,7 @@
 import type { Format, UpdateInfo } from './types';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { getVersion } from '@tauri-apps/api/app';
 import {
   fetchFormats,
   startProcess,
@@ -40,6 +41,13 @@ export function init(): void {
   bindRuntimeListeners();
   void refreshComponentVersions();
   if (getAiKey()) void loadAiModels();
+  void getVersion()
+    .then((v) => {
+      $<HTMLElement>('app-version').textContent = `v${v}`;
+    })
+    .catch(() => {
+      /* version display is cosmetic */
+    });
 }
 
 function render(): void {
@@ -141,6 +149,7 @@ function render(): void {
 
       <button id="process-btn" disabled class="primary">Скачать</button>
       <div class="hint">Enter — скачать · Ctrl+V — вставить URL</div>
+      <div id="app-version" class="version-corner"></div>
 
       <div id="progress-section" class="hidden">
         <label>Progress</label>
@@ -170,6 +179,11 @@ function bindEvents(): void {
   $<HTMLButtonElement>('translate-desc-btn').addEventListener('click', onTranslateDescription);
   $<HTMLImageElement>('aieauz-banner').addEventListener('click', () => {
     void openUrl('https://aiera.uz');
+  });
+  // Suppress the webview's image context menu (save/copy image) —
+  // the banner is an interactive link, not content.
+  $<HTMLImageElement>('aieauz-banner').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
   });
 
   const urlInput = $<HTMLInputElement>('url-input');

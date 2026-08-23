@@ -333,3 +333,19 @@ input[type='password']:focus {
 #aieauz-banner:hover {
   opacity: 1;
 }
+
+/* Версия приложения — правый нижний угол */
+.version-corner {
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  font-size: 11px;
+  color: #b0b0b0;
+  user-select: none;
+  pointer-events: none;
+}
+
+#aieauz-banner {
+  -webkit-user-select: none;
+  user-select: none;
+}
