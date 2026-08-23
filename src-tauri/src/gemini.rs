@@ -12,7 +12,10 @@ const GEMINI_API: &str = "https://generativelanguage.googleapis.com/v1beta/model
 /// unavailable). `gemini-2.0-flash` was shut down by Google on 2026-06-01 —
 /// keep this pinned to a live model.
 pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(90);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Retry policy for transient Gemini errors (503 overload etc.).
+const MAX_ATTEMPTS: u32 = 3;
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(5)];
 const MAX_DESCRIPTION_BYTES: usize = 64 * 1024;
 const MAX_OUTPUT_TOKENS: u32 = 8192;
 
@@ -74,28 +77,78 @@ pub async fn translate_description(
     });
 
     let url = format!("{GEMINI_API}/{model}:generateContent");
-    let response_text = tokio::time::timeout(HTTP_TIMEOUT, async {
-        tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
-            let mut reader = ureq::post(&url)
-                .header("Content-Type", "application/json")
-                // Header instead of ?key= query param: key charset doesn't
-                // matter and the key stays out of URLs/logs.
-                .header("x-goog-api-key", &key)
-                .send(body.to_string())?
-                .into_body()
-                .into_reader();
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut reader, &mut text)?;
-            Ok(text)
-        })
-        .await
-        .map_err(|e| AppError::Subprocess(format!("gemini task panicked: {e}")))?
-        .map_err(|e| AppError::Subprocess(format!("Gemini API request failed: {e}")))
+
+    // Gemini intermittently returns 5xx (overload) — retry with backoff
+    // so the user doesn't have to click twice.
+    let mut last_err: Option<AppError> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        let result = tokio::time::timeout(
+            HTTP_TIMEOUT,
+            single_post(url.clone(), key.to_string(), body.to_string()),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(response_text)) => return parse_gemini_response(&response_text),
+            Ok(Err(e)) => {
+                if is_retryable(&e) && attempt + 1 < MAX_ATTEMPTS {
+                    log::warn!(
+                        "gemini attempt {}/{} failed ({e}), retrying...",
+                        attempt + 1,
+                        MAX_ATTEMPTS
+                    );
+                    tokio::time::sleep(RETRY_DELAYS[attempt as usize]).await;
+                    last_err = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(_) => {
+                return Err(AppError::Subprocess("Gemini API request timed out".into()));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AppError::Subprocess("Gemini API failed".into())))
+}
+
+/// Single HTTP POST to the Gemini API. Errors are classified by `is_retryable`.
+async fn single_post(url: String, key: String, body: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
+        let mut reader = ureq::post(&url)
+            .header("Content-Type", "application/json")
+            // Header instead of ?key= query param: key charset doesn't
+            // matter and the key stays out of URLs/logs.
+            .header("x-goog-api-key", &key)
+            .send(body)?
+            .into_body()
+            .into_reader();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut text)?;
+        Ok(text)
     })
     .await
-    .map_err(|_| AppError::Subprocess("Gemini API request timed out".into()))??;
+    .map_err(|e| AppError::Subprocess(format!("gemini task panicked: {e}")))?
+    .map_err(|e| AppError::Subprocess(format!("Gemini API request failed: {e}")))
+}
 
-    parse_gemini_response(&response_text)
+/// Transient failures worth retrying: server-side 5xx and network hiccups.
+/// 4xx (invalid key, bad request) are permanent and returned immediately.
+fn is_retryable(e: &AppError) -> bool {
+    let s = e.to_string();
+    [
+        "status code 500",
+        "status code 502",
+        "status code 503",
+        "status code 504",
+        "status: INTERNAL",
+        "status: UNAVAILABLE",
+        "status: DEADLINE_EXCEEDED",
+        "timed out",
+        "connection",
+        "Dns",
+    ]
+    .iter()
+    .any(|marker| s.contains(marker))
 }
 
 /// Fetch model ids available to this API key (only those supporting
