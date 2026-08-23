@@ -82,6 +82,30 @@ pub async fn check_updates() -> AppResult<Vec<crate::updates::UpdateInfo>> {
     Ok(crate::updates::check_updates(&root).await)
 }
 
+/// Versions of the runtime components, shown in the UI. Queried actively by
+/// the frontend on startup (a startup-time push event races webview load).
+#[derive(Serialize)]
+pub struct RuntimeVersions {
+    pub ytdlp: Option<String>,
+    pub deno: Option<String>,
+    /// None when ffmpeg is missing or broken.
+    pub ffmpeg: Option<String>,
+}
+
+#[tauri::command]
+pub async fn runtime_versions() -> RuntimeVersions {
+    // check_ffmpeg spawns a process; keep it off the async executor.
+    let ffmpeg = tokio::task::spawn_blocking(crate::deps::check_ffmpeg)
+        .await
+        .ok()
+        .and_then(|r| r.ok());
+    RuntimeVersions {
+        ytdlp: crate::binaries::current_version("yt-dlp").await,
+        deno: crate::binaries::current_version("deno").await,
+        ffmpeg,
+    }
+}
+
 /// Download the latest release of `name` (yt-dlp|deno) into the cache.
 #[tauri::command]
 pub async fn update_binary(name: String) -> AppResult<String> {

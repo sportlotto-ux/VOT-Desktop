@@ -6,6 +6,7 @@ import {
   pickCookiesFile,
   pickOutputDir,
   cookiesInfo,
+  runtimeVersions,
   updateBinary,
 } from './ipc';
 
@@ -30,6 +31,7 @@ export function init(): void {
   render();
   bindEvents();
   bindRuntimeListeners();
+  void refreshComponentVersions();
 }
 
 function render(): void {
@@ -68,48 +70,49 @@ function render(): void {
       <section class="options-section">
         <div class="checkbox-row">
           <input type="checkbox" id="mix-check" checked />
-          <label for="mix-check">Mix with Russian voice translation (VOT)</label>
+          <label for="mix-check">Микшировать с русской озвучкой (Яндекс VOT)</label>
         </div>
 
         <div class="checkbox-row">
           <input type="checkbox" id="desc-check" checked />
-          <label for="desc-check">Translate description to Russian (AI Studio)</label>
+          <label for="desc-check">Переводить описание видео на русский (ИИ)</label>
         </div>
 
         <div class="option-row">
-          <span class="label">AI key</span>
+          <span class="label">API-ключ AI Studio</span>
           <input type="password" id="ai-key-input" class="text-input"
-            placeholder="Google AI Studio API key" autocomplete="off" />
+            placeholder="Вставьте ключ с aistudio.google.com/apikey" autocomplete="off" />
         </div>
+        <p class="hint">Ключ нужен только для перевода описаний. Получить бесплатно: aistudio.google.com/apikey</p>
 
         <div class="option-row">
           <span class="label">Cookies</span>
-          <span id="cookies-status" class="value">none</span>
-          <button id="cookies-btn" class="small">Choose file...</button>
-          <button id="cookies-clear" class="small hidden">Clear</button>
+          <span id="cookies-status" class="value">нет</span>
+          <button id="cookies-btn" class="small">Выбрать файл...</button>
+          <button id="cookies-clear" class="small hidden">Сбросить</button>
         </div>
 
         <div class="option-row">
-          <span class="label">Output</span>
+          <span class="label">Папка загрузки</span>
           <span id="output-path" class="value">${DEFAULT_OUTPUT_DIR}</span>
-          <button id="output-btn" class="small">Choose...</button>
+          <button id="output-btn" class="small">Выбрать...</button>
         </div>
 
         <div class="option-row">
-          <span class="label">ffmpeg</span>
-          <span id="ffmpeg-status" class="value">checking...</span>
+          <span class="label">Компоненты</span>
+          <span id="components-status" class="value">проверка…</span>
         </div>
       </section>
 
       <section id="update-section" class="hidden">
         <div class="option-row">
-          <span class="label">Updates</span>
+          <span class="label">Обновления</span>
           <span id="update-status" class="value"></span>
-          <button id="update-btn" class="small">Update</button>
+          <button id="update-btn" class="small">Обновить</button>
         </div>
       </section>
 
-      <button id="process-btn" disabled class="primary">Start</button>
+      <button id="process-btn" disabled class="primary">Скачать</button>
       <div class="hint">Enter — скачать · Ctrl+V — вставить URL</div>
 
       <div id="progress-section" class="hidden">
@@ -179,23 +182,42 @@ function bindEvents(): void {
 }
 
 function bindRuntimeListeners(): void {
-  // Backend signals ffmpeg availability after startup (ADR-002).
-  void listen<string>('ffmpeg-status', (event) => {
-    const el = $<HTMLElement>('ffmpeg-status');
-    el.textContent = event.payload;
-    el.classList.remove('missing');
-  });
-  void listen<string>('ffmpeg-missing', (event) => {
-    const el = $<HTMLElement>('ffmpeg-status');
-    el.textContent = event.payload;
-    el.classList.add('missing');
-  });
+  // Component versions are queried actively in init(); these listeners keep
+  // the row fresh if ffmpeg status changes or updates arrive later.
+  const setFfmpeg = (text: string, missing: boolean): void => {
+    componentVersions.ffmpeg = text;
+    renderComponents();
+    $<HTMLElement>('components-status').classList.toggle('missing', missing);
+  };
+  void listen<string>('ffmpeg-status', (event) => setFfmpeg(event.payload, false));
+  void listen<string>('ffmpeg-missing', () => setFfmpeg('не найден', true));
 
   // Available runtime binary updates (yt-dlp/deno), ADR-012.
   void listen<UpdateInfo[]>('update-available', (event) => {
     pendingUpdates = event.payload;
     renderUpdates();
   });
+}
+
+const componentVersions = { ytdlp: '…', deno: '…', ffmpeg: '…' };
+
+function renderComponents(): void {
+  $<HTMLElement>('components-status').textContent =
+    `yt-dlp ${componentVersions.ytdlp} · deno ${componentVersions.deno} · ffmpeg ${componentVersions.ffmpeg}`;
+}
+
+async function refreshComponentVersions(): Promise<void> {
+  try {
+    const v = await runtimeVersions();
+    componentVersions.ytdlp = v.ytdlp ?? 'не найден';
+    componentVersions.deno = v.deno ?? 'не найден';
+    componentVersions.ffmpeg = v.ffmpeg ?? 'не найден';
+  } catch {
+    componentVersions.ytdlp = '?';
+    componentVersions.deno = '?';
+    componentVersions.ffmpeg = '?';
+  }
+  renderComponents();
 }
 
 let pendingUpdates: UpdateInfo[] = [];
@@ -242,7 +264,7 @@ async function onFetch(): Promise<void> {
   const url = $<HTMLInputElement>('url-input').value.trim();
   if (!url) return;
 
-  setProgress('Fetching formats...');
+  setProgress('Получаю форматы...');
   hideError();
   hideResult();
 
@@ -492,7 +514,7 @@ async function onProcess(): Promise<void> {
 
   const btn = $<HTMLButtonElement>('process-btn');
   btn.disabled = true;
-  btn.textContent = 'Processing...';
+  btn.textContent = 'Обработка...';
 
   const progressSection = $<HTMLElement>('progress-section');
   const progressBar = $<HTMLProgressElement>('progress-bar');
@@ -548,7 +570,7 @@ async function onProcess(): Promise<void> {
   } finally {
     isProcessing = false;
     btn.disabled = false;
-    btn.textContent = 'Start';
+    btn.textContent = 'Скачать';
   }
 }
 

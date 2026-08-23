@@ -61,6 +61,7 @@ pub fn run() {
             commands::fetch_formats,
             commands::start_process,
             commands::cookies_info,
+            commands::runtime_versions,
             commands::check_updates,
             commands::update_binary,
         ])

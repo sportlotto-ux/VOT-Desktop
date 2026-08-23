@@ -74,6 +74,16 @@ export async function cookiesInfo(path: string): Promise<CookieInfo> {
   return await invoke<CookieInfo>('cookies_info', { path });
 }
 
+export interface RuntimeVersions {
+  ytdlp: string | null;
+  deno: string | null;
+  ffmpeg: string | null;
+}
+
+export async function runtimeVersions(): Promise<RuntimeVersions> {
+  return await invoke<RuntimeVersions>('runtime_versions');
+}
+
 export async function checkUpdates(): Promise<UpdateInfo[]> {
   return await invoke<UpdateInfo[]>('check_updates');
 }

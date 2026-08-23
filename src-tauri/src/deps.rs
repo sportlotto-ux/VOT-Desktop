@@ -22,6 +22,12 @@ pub fn check_ffmpeg() -> AppResult<String> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let first_line = stdout.lines().next().unwrap_or("ffmpeg (unknown)");
-    Ok(first_line.to_string())
+    let first_line = stdout.lines().next().unwrap_or("");
+    // "ffmpeg version 8.1.2 Copyright ..." -> "8.1.2"
+    let version = first_line
+        .split_whitespace()
+        .nth(2)
+        .unwrap_or("(unknown)")
+        .to_string();
+    Ok(version)
 }
