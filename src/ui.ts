@@ -1,5 +1,6 @@
 import type { Format, UpdateInfo } from './types';
 import { listen } from '@tauri-apps/api/event';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   fetchFormats,
   startProcess,
@@ -45,7 +46,11 @@ function render(): void {
   const app = $<HTMLElement>('app');
   app.innerHTML = `
     <div class="container">
-      <h1>VotDesktop</h1>
+      <div class="header-row">
+        <h1>VotDesktop</h1>
+        <img id="aieauz-banner" src="/aieauz.png" alt="aiera.uz"
+          title="aiera.uz" draggable="false" />
+      </div>
 
       <!-- Остров 1: ссылка YouTube -->
       <section class="card">
@@ -163,6 +168,9 @@ function bindEvents(): void {
   $<HTMLButtonElement>('log-clear').addEventListener('click', clearLog);
   $<HTMLButtonElement>('update-btn').addEventListener('click', onUpdateBinary);
   $<HTMLButtonElement>('translate-desc-btn').addEventListener('click', onTranslateDescription);
+  $<HTMLImageElement>('aieauz-banner').addEventListener('click', () => {
+    void openUrl('https://aiera.uz');
+  });
 
   const urlInput = $<HTMLInputElement>('url-input');
   const aiKeyInput = $<HTMLInputElement>('ai-key-input');

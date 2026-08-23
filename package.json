@@ -1,7 +1,7 @@
 {
   "name": "vot-desktop",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "description": "Desktop app for downloading YouTube videos with Yandex VOT voice translation",
   "scripts": {
@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
-    "@tauri-apps/plugin-dialog": "^2.0.1"
+    "@tauri-apps/plugin-dialog": "^2.0.1",
+    "@tauri-apps/plugin-opener": "^2.5.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

@@ -309,3 +309,27 @@ input[type='password']:focus {
   border-color: #4a90d9;
   box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.2);
 }
+
+/* ---- Шапка: заголовок + кликабельный баннер aiera.uz ---- */
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-row h1 {
+  margin: 0;
+}
+
+#aieauz-banner {
+  height: 52px;
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 0.15s;
+}
+
+#aieauz-banner:hover {
+  opacity: 1;
+}
