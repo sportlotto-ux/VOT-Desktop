@@ -7,8 +7,11 @@
 use crate::error::{AppError, AppResult};
 use std::time::Duration;
 
-const GEMINI_ENDPOINT: &str =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+const GEMINI_API: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+/// Fallback when the frontend sends no/unknown model (e.g. ListModels
+/// unavailable). `gemini-2.0-flash` was shut down by Google on 2026-06-01 —
+/// keep this pinned to a live model.
+pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_DESCRIPTION_BYTES: usize = 64 * 1024;
 const MAX_OUTPUT_TOKENS: u32 = 8192;
@@ -19,7 +22,12 @@ Keep the original formatting: preserve line breaks, links, hashtags and @mention
 Do not add any commentary — return only the translation.\n\n---\n";
 
 /// Translate a video description to Russian. Returns the translated text.
-pub async fn translate_description(text: &str, api_key: &str) -> AppResult<String> {
+/// `model` — id from ListModels; unknown values fall back to `DEFAULT_MODEL`.
+pub async fn translate_description(
+    text: &str,
+    api_key: &str,
+    model: Option<&str>,
+) -> AppResult<String> {
     if text.trim().is_empty() {
         return Err(AppError::InvalidInput("description is empty".into()));
     }
@@ -39,6 +47,19 @@ pub async fn translate_description(text: &str, api_key: &str) -> AppResult<Strin
             "AI Studio API key has invalid format".into(),
         ));
     }
+    // The value goes into the URL path — keep it strict even though it
+    // normally comes from our own ListModels response.
+    let model = match model {
+        Some(m)
+            if !m.is_empty()
+                && m.len() <= 64
+                && m.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
+        {
+            m
+        }
+        _ => DEFAULT_MODEL,
+    };
 
     let body = serde_json::json!({
         "contents": [{"parts": [{"text": format!("{PROMPT}{text}")}]}],
@@ -49,7 +70,7 @@ pub async fn translate_description(text: &str, api_key: &str) -> AppResult<Strin
         "safetySettings": [],
     });
 
-    let url = format!("{GEMINI_ENDPOINT}?key={key}");
+    let url = format!("{GEMINI_API}/{model}:generateContent?key={key}");
     let response_text = tokio::time::timeout(HTTP_TIMEOUT, async {
         tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
             let mut reader = ureq::post(&url)
@@ -69,6 +90,57 @@ pub async fn translate_description(text: &str, api_key: &str) -> AppResult<Strin
     .map_err(|_| AppError::Subprocess("Gemini API request timed out".into()))??;
 
     parse_gemini_response(&response_text)
+}
+
+/// Fetch model ids available to this API key (only those supporting
+/// `generateContent`), e.g. ["gemini-3.5-flash", ...]. Used to populate the
+/// UI dropdown so we never hardcode model names.
+pub async fn list_models(api_key: &str) -> AppResult<Vec<String>> {
+    let key = api_key.trim();
+    if key.is_empty() || key.len() > 256 {
+        return Err(AppError::InvalidInput("API key is empty".into()));
+    }
+    let url = format!("{GEMINI_API}?key={key}&pageSize=1000");
+    let body = tokio::time::timeout(HTTP_TIMEOUT, async {
+        tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
+            let mut reader = ureq::get(&url)
+                .header("Accept", "application/json")
+                .call()?
+                .into_body()
+                .into_reader();
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut reader, &mut text)?;
+            Ok(text)
+        })
+        .await
+        .map_err(|e| AppError::Subprocess(format!("gemini task panicked: {e}")))?
+        .map_err(|e| AppError::Subprocess(format!("Gemini API request failed: {e}")))
+    })
+    .await
+    .map_err(|_| AppError::Subprocess("Gemini API request timed out".into()))??;
+
+    #[derive(serde::Deserialize)]
+    struct ModelsResponse {
+        models: Option<Vec<Entry>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        name: String,
+        #[serde(rename = "supportedGenerationMethods", default)]
+        methods: Vec<String>,
+    }
+
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .map_err(|e| AppError::Subprocess(format!("failed to parse Gemini models: {e}")))?;
+    let mut ids: Vec<String> = parsed
+        .models
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| m.methods.iter().any(|x| x == "generateContent"))
+        .filter_map(|m| m.name.strip_prefix("models/").map(str::to_string))
+        .collect();
+    ids.sort();
+    Ok(ids)
 }
 
 fn parse_gemini_response(raw: &str) -> AppResult<String> {

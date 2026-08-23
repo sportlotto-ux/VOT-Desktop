@@ -7,18 +7,24 @@ import {
   pickOutputDir,
   cookiesInfo,
   runtimeVersions,
+  geminiModels,
+  translateDescription,
   updateBinary,
 } from './ipc';
 
 const DEFAULT_OUTPUT_DIR = '~/Videos/VotDesktop';
 const STALE_COOKIES_DAYS = 30;
 const AI_KEY_STORAGE = 'vot-ai-api-key';
+const AI_MODEL_STORAGE = 'vot-ai-model';
 
 let currentFormats: Format[] = [];
 let currentDescription: string | null = null;
+/** Parent dir of the last downloaded artifact — where description.ru.txt goes. */
+let lastResultDir: string | null = null;
 let cookiesPath: string | null = null;
 let outputDir: string | null = null;
 let isProcessing = false;
+let isTranslating = false;
 
 function getAiKey(): string {
   return localStorage.getItem(AI_KEY_STORAGE)?.trim() ?? '';
@@ -32,6 +38,7 @@ export function init(): void {
   bindEvents();
   bindRuntimeListeners();
   void refreshComponentVersions();
+  if (getAiKey()) void loadAiModels();
 }
 
 function render(): void {
@@ -73,17 +80,20 @@ function render(): void {
           <label for="mix-check">Микшировать с русской озвучкой (Яндекс VOT)</label>
         </div>
 
-        <div class="checkbox-row">
-          <input type="checkbox" id="desc-check" checked />
-          <label for="desc-check">Переводить описание видео на русский (ИИ)</label>
-        </div>
-
         <div class="option-row">
           <span class="label">API-ключ AI Studio</span>
           <input type="password" id="ai-key-input" class="text-input"
             placeholder="Вставьте ключ с aistudio.google.com/apikey" autocomplete="off" />
         </div>
         <p class="hint">Ключ нужен только для перевода описаний. Получить бесплатно: aistudio.google.com/apikey</p>
+
+        <div class="option-row sub-option">
+          <span class="label">Модель ИИ</span>
+          <select id="ai-model-select" class="text-input" disabled>
+            <option value="">Введите API-ключ…</option>
+          </select>
+          <button id="translate-desc-btn" class="small" disabled>Перевести описание</button>
+        </div>
 
         <div class="option-row">
           <span class="label">Cookies</span>
@@ -140,12 +150,21 @@ function bindEvents(): void {
   $<HTMLButtonElement>('process-btn').addEventListener('click', onProcess);
   $<HTMLButtonElement>('log-clear').addEventListener('click', clearLog);
   $<HTMLButtonElement>('update-btn').addEventListener('click', onUpdateBinary);
+  $<HTMLButtonElement>('translate-desc-btn').addEventListener('click', onTranslateDescription);
 
   const urlInput = $<HTMLInputElement>('url-input');
   const aiKeyInput = $<HTMLInputElement>('ai-key-input');
   aiKeyInput.value = localStorage.getItem(AI_KEY_STORAGE) ?? '';
+  let modelsDebounce: ReturnType<typeof setTimeout> | undefined;
   aiKeyInput.addEventListener('input', () => {
     localStorage.setItem(AI_KEY_STORAGE, aiKeyInput.value.trim());
+    updateTranslateDescAvailability();
+    clearTimeout(modelsDebounce);
+    modelsDebounce = setTimeout(loadAiModels, 700);
+  });
+  const aiModelSelect = $<HTMLSelectElement>('ai-model-select');
+  aiModelSelect.addEventListener('change', () => {
+    localStorage.setItem(AI_MODEL_STORAGE, aiModelSelect.value);
   });
   urlInput.addEventListener('input', () => {
     $<HTMLButtonElement>('fetch-btn').disabled = urlInput.value.trim() === '';
@@ -192,6 +211,11 @@ function bindRuntimeListeners(): void {
   void listen<string>('ffmpeg-status', (event) => setFfmpeg(event.payload, false));
   void listen<string>('ffmpeg-missing', () => setFfmpeg('не найден', true));
 
+  // Surface description translation failures instead of failing silently.
+  void listen<string>('translation-error', (event) => {
+    log(`Ошибка перевода описания: ${event.payload}`);
+  });
+
   // Available runtime binary updates (yt-dlp/deno), ADR-012.
   void listen<UpdateInfo[]>('update-available', (event) => {
     pendingUpdates = event.payload;
@@ -218,6 +242,70 @@ async function refreshComponentVersions(): Promise<void> {
     componentVersions.ffmpeg = '?';
   }
   renderComponents();
+}
+
+// ---- AI description translation (manual) ----
+
+async function loadAiModels(): Promise<void> {
+  const key = getAiKey();
+  const select = $<HTMLSelectElement>('ai-model-select');
+  if (!key) {
+    select.disabled = true;
+    select.innerHTML = '<option value="">Введите API-ключ…</option>';
+    return;
+  }
+  select.disabled = true;
+  select.innerHTML = '<option value="">Загрузка моделей…</option>';
+  try {
+    const models = await geminiModels(key);
+    if (models.length === 0) throw new Error('пустой список моделей');
+    const saved = localStorage.getItem(AI_MODEL_STORAGE) ?? '';
+    select.innerHTML = models
+      .map((m) => `<option value="${m}"${m === saved ? ' selected' : ''}>${m}</option>`)
+      .join('');
+    if (!models.includes(saved)) localStorage.setItem(AI_MODEL_STORAGE, models[0]);
+    select.disabled = false;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    select.innerHTML = `<option value="">Не удалось получить модели (${msg})</option>`;
+    log(`Не удалось получить список моделей: ${msg}`);
+  }
+}
+
+function updateTranslateDescAvailability(): void {
+  $<HTMLButtonElement>('translate-desc-btn').disabled =
+    isTranslating || !currentDescription || !getAiKey();
+}
+
+async function onTranslateDescription(): Promise<void> {
+  const btn = $<HTMLButtonElement>('translate-desc-btn');
+  if (isTranslating || !currentDescription || !getAiKey()) return;
+
+  isTranslating = true;
+  btn.disabled = true;
+  btn.textContent = 'Перевод...';
+  hideError();
+  try {
+    const text = await translateDescription({
+      description: currentDescription,
+      api_key: getAiKey(),
+      model: $<HTMLSelectElement>('ai-model-select').value || undefined,
+      save_dir: lastResultDir ?? undefined,
+    });
+    showResult(text);
+    log(
+      lastResultDir
+        ? `Перевод сохранён: ${lastResultDir}/description.ru.txt`
+        : 'Видео ещё не скачивалось — перевод показан здесь и не сохранён на диск',
+    );
+  } catch (err: unknown) {
+    showError(err);
+    log(`Ошибка перевода описания: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    isTranslating = false;
+    btn.textContent = 'Перевести описание';
+    updateTranslateDescAvailability();
+  }
 }
 
 let pendingUpdates: UpdateInfo[] = [];
@@ -272,6 +360,7 @@ async function onFetch(): Promise<void> {
     const response = await fetchFormats(url, cookiesPath ?? undefined);
     currentFormats = response.formats;
     currentDescription = response.description;
+    updateTranslateDescAvailability();
     setProgress(`Found ${currentFormats.length} formats`);
     populateSelectors(currentFormats);
     enableProcess();
@@ -527,18 +616,13 @@ async function onProcess(): Promise<void> {
   hideResult();
 
   try {
-    const aiKey = getAiKey();
     const result = await startProcess(
       url,
       formatId,
       kind,
       dir,
       doTranslate,
-      {
-        cookiesPath: cookiesPath ?? undefined,
-        description: currentDescription ?? undefined,
-        aiApiKey: aiKey || undefined,
-      },
+      { cookiesPath: cookiesPath ?? undefined },
       (msg) => {
         progressText.textContent = msg;
         log(msg);
@@ -549,24 +633,24 @@ async function onProcess(): Promise<void> {
     );
 
     progressBar.value = 100;
-    progressText.textContent = 'Done!';
+    progressText.textContent = 'Готово!';
 
     if (result.mixed_path) {
-      showResult(`Mixed video saved: ${result.mixed_path}`);
+      showResult(`Видео с переводом сохранено: ${result.mixed_path}`);
     } else {
-      let resultMsg = `Video saved: ${result.video_path}`;
+      let resultMsg = `Видео сохранено: ${result.video_path}`;
       if (result.translation_path) {
-        resultMsg += `\nTranslation: ${result.translation_path}`;
+        resultMsg += `\nОзвучка: ${result.translation_path}`;
       }
       showResult(resultMsg);
     }
-    if (currentDescription && getAiKey()) {
-      const folder = (result.mixed_path ?? result.video_path).replace(/[/\\][^/\\]+$/, '');
-      log(`Descriptions saved to ${folder} (description.txt / description.ru.txt)`);
-    }
+    // Remember the per-video folder so "Перевести описание" can save there.
+    const artifactPath = result.mixed_path ?? result.video_path;
+    lastResultDir = artifactPath.replace(/[/\\][^/\\]+$/, '') || null;
+    updateTranslateDescAvailability();
   } catch (err: unknown) {
     showError(err);
-    progressText.textContent = 'Failed';
+    progressText.textContent = 'Ошибка';
   } finally {
     isProcessing = false;
     btn.disabled = false;

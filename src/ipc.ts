@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { CookieInfo, FetchFormatsResponse, ProcessRequest, ProcessResponse, UpdateInfo } from './types';
+import type { CookieInfo, FetchFormatsResponse, ProcessRequest, ProcessResponse, TranslateDescriptionRequest, UpdateInfo } from './types';
 
 export async function fetchFormats(
   url: string,
@@ -20,8 +20,6 @@ export async function startProcess(
   doTranslate: boolean,
   options?: {
     cookiesPath?: string;
-    description?: string;
-    aiApiKey?: string;
   },
   onStep?: (msg: string) => void,
   onProgress?: (pct: number) => void,
@@ -35,12 +33,6 @@ export async function startProcess(
   };
   if (options?.cookiesPath) {
     req.cookies_path = options.cookiesPath;
-  }
-  if (options?.description) {
-    req.description = options.description;
-  }
-  if (options?.aiApiKey) {
-    req.ai_api_key = options.aiApiKey;
   }
 
   const unlistenStep = await listen<string>('process-step', (e) => {
@@ -82,6 +74,16 @@ export interface RuntimeVersions {
 
 export async function runtimeVersions(): Promise<RuntimeVersions> {
   return await invoke<RuntimeVersions>('runtime_versions');
+}
+
+export async function geminiModels(apiKey: string): Promise<string[]> {
+  return await invoke<string[]>('gemini_models', { apiKey });
+}
+
+export async function translateDescription(
+  request: TranslateDescriptionRequest,
+): Promise<string> {
+  return await invoke<string>('translate_description', { request });
 }
 
 export async function checkUpdates(): Promise<UpdateInfo[]> {

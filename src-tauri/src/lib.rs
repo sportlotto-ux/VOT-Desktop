@@ -21,13 +21,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Log in release builds too (Warn+) — otherwise subprocess
+            // failures like Gemini/yt-dlp errors are completely invisible.
+            let level = if cfg!(debug_assertions) {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Warn
+            };
+            app.handle()
+                .plugin(tauri_plugin_log::Builder::default().level(level).build())?;
 
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -62,6 +64,8 @@ pub fn run() {
             commands::start_process,
             commands::cookies_info,
             commands::runtime_versions,
+            commands::translate_description,
+            commands::gemini_models,
             commands::check_updates,
             commands::update_binary,
         ])

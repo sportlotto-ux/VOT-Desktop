@@ -1,7 +1,7 @@
 //! Tauri command handlers exposed to the frontend.
 
 use crate::downloader;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::pipeline::{self, SelectionKind};
 use crate::types::{Format, ProgressEvent};
 use serde::Deserialize;
@@ -42,10 +42,6 @@ pub struct ProcessRequest {
     pub output_dir: String,
     pub cookies_path: Option<String>,
     pub do_translate: bool,
-    /// Raw YouTube description (from fetch_formats) for AI translation.
-    pub description: Option<String>,
-    /// Google AI Studio API key; enables writing `<stem>.description.ru.txt`.
-    pub ai_api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -106,6 +102,43 @@ pub async fn runtime_versions() -> RuntimeVersions {
     }
 }
 
+// ---- AI description translation (manual, user-triggered) ----
+
+#[derive(Deserialize)]
+pub struct TranslateDescriptionRequest {
+    pub description: String,
+    pub api_key: String,
+    /// Model id from `gemini_models`; empty/unknown -> backend default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// When set, the translation is written to `<dir>/description.ru.txt`.
+    pub save_dir: Option<String>,
+}
+
+/// Translate a video description to Russian via Google AI Studio.
+/// Returns the translated text.
+#[tauri::command]
+pub async fn translate_description(request: TranslateDescriptionRequest) -> AppResult<String> {
+    let text = crate::gemini::translate_description(
+        &request.description,
+        &request.api_key,
+        request.model.as_deref(),
+    )
+    .await?;
+
+    if let Some(dir) = request.save_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+        let path = PathBuf::from(dir).join("description.ru.txt");
+        std::fs::write(&path, &text).map_err(AppError::Io)?;
+    }
+    Ok(text)
+}
+
+/// Model ids available to this API key (for the UI dropdown).
+#[tauri::command]
+pub async fn gemini_models(api_key: String) -> AppResult<Vec<String>> {
+    crate::gemini::list_models(&api_key).await
+}
+
 /// Download the latest release of `name` (yt-dlp|deno) into the cache.
 #[tauri::command]
 pub async fn update_binary(name: String) -> AppResult<String> {
@@ -148,8 +181,6 @@ pub async fn start_process(
         output_dir,
         cookies,
         do_translate: request.do_translate,
-        description: request.description,
-        ai_api_key: request.ai_api_key,
         progress: tx,
         events: Arc::new(window),
     };

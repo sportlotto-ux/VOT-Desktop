@@ -274,3 +274,12 @@ progress::-webkit-progress-value {
 .hidden {
   display: none;
 }
+
+/* Поле API-ключа визуально подчинено чекбоксу ИИ-перевода */
+.options-section .sub-option {
+  margin-left: 28px;
+}
+
+.value.missing {
+  color: #a02020;
+}

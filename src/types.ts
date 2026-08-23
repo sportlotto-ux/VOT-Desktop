@@ -19,8 +19,13 @@ export interface ProcessRequest {
   output_dir: string;
   cookies_path?: string;
   do_translate: boolean;
-  description?: string;
-  ai_api_key?: string;
+}
+
+export interface TranslateDescriptionRequest {
+  description: string;
+  api_key: string;
+  model?: string;
+  save_dir?: string;
 }
 
 export interface ProcessResponse {
