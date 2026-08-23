@@ -15,9 +15,9 @@
 ## Установка
 
 ```bash
-# Требования: ffmpeg
-sudo dnf install ffmpeg          # Fedora
-sudo apt install ffmpeg          # Ubuntu/Debian
+# Требования: ffmpeg + webkit2gtk-4.1 (AppImage использует системные библиотеки)
+sudo dnf install ffmpeg webkit2gtk4.1   # Fedora
+sudo apt install ffmpeg libwebkit2gtk-4.1-0  # Ubuntu/Debian
 
 # Скачать AppImage
 chmod +x VotDesktop_*.AppImage

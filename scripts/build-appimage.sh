@@ -33,24 +33,30 @@ npm ci
 echo ">> npm run tauri:build"
 npm run tauri:build
 
-# ---- 5. Перепаковка AppImage с xz-сжатием ----
-# linuxdeploy-plugin-appimage пакует squashfs с zstd и block 16K, что даёт
-# больший размер. xz с block 1M сжимает лучше — перепаковываем из готового
-# AppDir. Проверено: работает, время ~45s.
-APPIMAGETOOL="$(command -v appimagetool || true)"
+# ---- 5. Перепаковка AppImage в "тонкий" вариант ----
+# Бандл linuxdeploy тянет webkit2gtk/GTK из хоста сборки; на машинах с другим
+# стеком драйверов это даёт белый webview (EGL_BAD_PARAMETER). Вырезаем
+# usr/lib целиком — AppImage использует системные библиотеки (как .deb).
+APPIMAGETOOL="${APPIMAGETOOL:-/tmp/appimagetool-x86_64.AppImage}"
+if [[ ! -f "${APPIMAGETOOL}" ]]; then
+  echo ">> downloading appimagetool..."
+  curl -fsSL -o "${APPIMAGETOOL}" \
+    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+  chmod +x "${APPIMAGETOOL}"
+fi
 APPIMAGE_OUT="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)"
-APPDIR="src-tauri/target/release/bundle/appimage/VotDesktop.AppDir"
 
-if [[ -n "${APPIMAGETOOL}" && -n "${APPIMAGE_OUT}" && -d "${APPDIR}" ]]; then
-  echo ">> Repacking ${APPIMAGE_OUT} with xz/1M compression..."
-  ARCH=x86_64 "${APPIMAGETOOL}" --comp xz \
-    --mksquashfs-opt="-b" --mksquashfs-opt="1048576" \
-    --no-appstream "${APPDIR}" "${APPIMAGE_OUT}.xz" > /dev/null
-  mv -f "${APPIMAGE_OUT}.xz" "${APPIMAGE_OUT}"
+if [[ -n "${APPIMAGE_OUT}" ]]; then
+  cd "$(dirname "${APPIMAGE_OUT}")"
+  echo ">> Repacking $(basename "${APPIMAGE_OUT}") as thin AppImage (system libs)..."
+  ./"$(basename "${APPIMAGE_OUT}")" --appimage-extract > /dev/null
+  rm -rf squashfs-root/usr/lib
+  ARCH=x86_64 "${APPIMAGETOOL}" --no-appstream squashfs-root "$(basename "${APPIMAGE_OUT}")" > /dev/null
+  rm -rf squashfs-root
   chmod +x "${APPIMAGE_OUT}"
   echo ">> Repacked: $(ls -lh "${APPIMAGE_OUT}" | awk '{print $5}')"
 else
-  echo ">> SKIP repack: appimagetool or AppDir missing"
+  echo ">> SKIP repack: AppImage missing"
 fi
 
 # ---- 6. Результат ----

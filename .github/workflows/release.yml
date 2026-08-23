@@ -34,12 +34,30 @@ jobs:
       - name: Frontend deps
         run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Tauri app
+        run: npm run tauri:build
+
+      # Bundled Ubuntu webkit2gtk/GTK libs break rendering on hosts with
+      # different driver stacks (blank webview, EGL errors). Ship a thin
+      # AppImage that uses the host's system libraries instead.
+      - name: Repack thin AppImage
+        run: |
+          cd src-tauri/target/release/bundle/appimage
+          APPIMAGE=$(ls *.AppImage | head -1)
+          ./"$APPIMAGE" --appimage-extract >/dev/null
+          rm -rf squashfs-root/usr/lib
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --no-appstream squashfs-root "$APPIMAGE"
+          rm -rf squashfs-root appimagetool
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'VotDesktop ${{ github.ref_name }}'
-          releaseBody: 'Requires ffmpeg. Download the AppImage, chmod +x and run — yt-dlp/deno are fetched into ~/.cache/votdesktop on first launch.'
-          releaseDraft: false
-          prerelease: false
+          tag_name: ${{ github.ref_name }}
+          name: VotDesktop ${{ github.ref_name }}
+          body: 'Requires ffmpeg and webkit2gtk-4.1. Download the AppImage, chmod +x and run — yt-dlp/deno are fetched into ~/.cache/votdesktop on first launch.'
+          files: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
