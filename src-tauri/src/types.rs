@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[allow(dead_code)]
 pub struct YtDlpVideoInfo {
     pub title: Option<String>,
+    pub description: Option<String>,
     pub formats: Vec<YtDlpFormat>,
 }
 
@@ -35,6 +36,14 @@ pub struct Format {
     pub filesize: String,
     pub has_video: bool,
     pub has_audio: bool,
+}
+
+/// Result of `yt-dlp --dump-json`: formats plus the raw video description
+/// (used for AI translation into Russian).
+#[derive(Debug, serde::Serialize)]
+pub struct FetchedVideoInfo {
+    pub formats: Vec<Format>,
+    pub description: Option<String>,
 }
 
 impl From<YtDlpFormat> for Format {

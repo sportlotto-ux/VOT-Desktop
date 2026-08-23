@@ -94,6 +94,11 @@ pub struct ProcessContext {
     pub output_dir: PathBuf,
     pub cookies: Option<PathBuf>,
     pub do_translate: bool,
+    /// Raw YouTube description from the last fetch_formats call.
+    pub description: Option<String>,
+    /// AI Studio API key; when present together with `description`, a Russian
+    /// translation is written next to the video after processing.
+    pub ai_api_key: Option<String>,
     pub progress: UnboundedSender<ProgressEvent>,
     pub events: Arc<dyn PipelineEvents>,
 }
@@ -132,10 +137,64 @@ pub async fn run_process(ctx: ProcessContext) -> AppResult<ProcessResponse> {
         SelectionKind::Audio => run_audio(&ctx, &download_dir).await,
     };
 
+    // Best-effort: write original + AI-translated description next to the
+    // artifact. Never fails the pipeline.
+    if let Ok(artifact) = &result {
+        let dir = artifact
+            .path
+            .parent()
+            .unwrap_or(&ctx.output_dir)
+            .to_path_buf();
+        save_descriptions(&ctx, &dir).await;
+    }
+
     if let Some(work) = work_dir {
         let _ = std::fs::remove_dir_all(work);
     }
     result.map(Artifact::into_response)
+}
+
+/// Write `<stem>.description.txt` (original) and, when an API key is set,
+/// `<stem>.description.ru.txt` (AI translation) into `dir`.
+async fn save_descriptions(ctx: &ProcessContext, dir: &Path) {
+    let Some(description) = ctx.description.as_deref() else {
+        return;
+    };
+    let Some(key) = ctx.ai_api_key.as_deref() else {
+        return;
+    };
+    if description.trim().is_empty() || key.trim().is_empty() {
+        return;
+    }
+
+    let stem = "description";
+    let original_path = dir.join(format!("{stem}.txt"));
+    if !original_path.exists() {
+        if let Err(e) = std::fs::write(&original_path, description) {
+            log::warn!("failed to write original description: {e}");
+            return;
+        }
+    }
+
+    ctx.events.step("Translating description to Russian...");
+    match crate::gemini::translate_description(description, key).await {
+        Ok(text) => {
+            let ru_path = dir.join(format!("{stem}.ru.txt"));
+            match std::fs::write(&ru_path, text) {
+                Ok(()) => ctx.events.translation_complete(&ru_path.to_string_lossy()),
+                Err(e) => {
+                    log::warn!("failed to write ru description: {e}");
+                    ctx.events
+                        .translation_error(&format!("failed to write description: {e}"));
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("description translation failed: {e}");
+            ctx.events
+                .translation_error(&format!("description translation failed: {e}"));
+        }
+    }
 }
 
 async fn run_video(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artifact> {
@@ -169,17 +228,23 @@ async fn run_video(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artif
             events.translation_complete(&translation.path.to_string_lossy());
 
             events.step("Mixing audio tracks...");
+            // Write next to the downloaded video (its per-video folder),
+            // not into the root output dir.
+            let mix_dir = video.path.parent().unwrap_or(&ctx.output_dir).to_path_buf();
             let mixed = crate::mixer::mix(
                 &video.path,
                 &audio.path,
                 &translation.path,
-                &ctx.output_dir,
+                &mix_dir,
                 Some(ctx.progress.clone()),
             )
             .await?;
             events.mix_complete(&mixed.to_string_lossy());
 
-            Ok(Artifact::new(mixed, ArtifactKind::Mixed))
+            // The per-video folder lives inside the temp work dir during
+            // translation runs; publish it into the user's output dir.
+            let published = publish_work_artifact(&mixed, &ctx.output_dir)?;
+            Ok(Artifact::new(published, ArtifactKind::Mixed))
         }
         Ok(None) => {
             events.translation_not_found();
@@ -229,6 +294,27 @@ fn format_with_best_audio(fid: &str) -> String {
     } else {
         format!("{fid}+bestaudio/best")
     }
+}
+
+/// Move a finished artifact (inside the per-video work folder) into the
+/// user's output dir, relocating the whole folder. Returns the new path.
+fn publish_work_artifact(file: &Path, output_root: &Path) -> AppResult<PathBuf> {
+    let folder = file
+        .parent()
+        .ok_or_else(|| AppError::Subprocess("artifact has no parent folder".into()))?;
+    let name = folder
+        .file_name()
+        .ok_or_else(|| AppError::Subprocess("work folder has invalid name".into()))?;
+    let dest = output_root.join(name);
+    if folder != dest {
+        // Replace any stale folder left by a previous run of the same video.
+        let _ = std::fs::remove_dir_all(&dest);
+        std::fs::rename(folder, &dest).map_err(AppError::Io)?;
+    }
+    Ok(dest.join(
+        file.file_name()
+            .ok_or_else(|| AppError::Subprocess("artifact has invalid name".into()))?,
+    ))
 }
 
 fn create_work_dir(output_dir: &Path) -> AppResult<PathBuf> {

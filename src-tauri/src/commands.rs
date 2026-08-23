@@ -10,21 +10,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Emitter;
 
-// ---- Ping ----
+// ---- Format fetching ----
 
 #[derive(Serialize)]
-pub struct PingResponse {
-    pub message: String,
+pub struct FetchedFormatsResponse {
+    pub formats: Vec<Format>,
+    pub description: Option<String>,
 }
-
-#[tauri::command]
-pub fn ping() -> PingResponse {
-    PingResponse {
-        message: "pong from vot_desktop".to_string(),
-    }
-}
-
-// ---- Format fetching ----
 
 #[derive(Deserialize)]
 pub struct FetchFormatsRequest {
@@ -33,74 +25,13 @@ pub struct FetchFormatsRequest {
 }
 
 #[tauri::command]
-pub async fn fetch_formats(request: FetchFormatsRequest) -> AppResult<Vec<Format>> {
+pub async fn fetch_formats(request: FetchFormatsRequest) -> AppResult<FetchedFormatsResponse> {
     let cookies = request.cookies_path.as_ref().map(PathBuf::from);
-    downloader::fetch_formats(&request.url, cookies.as_deref()).await
-}
-
-#[derive(Deserialize)]
-pub struct StartDownloadRequest {
-    pub url: String,
-    pub format_id: String,
-    pub output_dir: String,
-    pub cookies_path: Option<String>,
-}
-
-#[tauri::command]
-pub async fn start_download(
-    request: StartDownloadRequest,
-    window: tauri::Window,
-) -> AppResult<String> {
-    let output_dir = expand_tilde(&request.output_dir);
-    let cookies = request.cookies_path.as_ref().map(PathBuf::from);
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProgressEvent>();
-    let w = window.clone();
-    tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            let _ = w.emit("process-progress", &ev);
-        }
-    });
-    let result = downloader::download(
-        &request.url,
-        &request.format_id,
-        &output_dir,
-        cookies.as_deref(),
-        Some(tx),
-    )
-    .await?;
-    let path_str = result.to_string_lossy().to_string();
-    let _ = window.emit("download-complete", &path_str);
-    Ok(path_str)
-}
-
-#[derive(Deserialize)]
-pub struct StartTranslateRequest {
-    pub url: String,
-    pub output_dir: String,
-}
-
-#[tauri::command]
-pub async fn start_translate(
-    request: StartTranslateRequest,
-    window: tauri::Window,
-) -> AppResult<Option<String>> {
-    let output_dir = expand_tilde(&request.output_dir);
-    let _ = window.emit("translation-progress", "Starting VOT translation...");
-    match crate::translator::fetch_translation(&request.url, &output_dir).await {
-        Ok(Some(path)) => {
-            let path_str = path.to_string_lossy().to_string();
-            let _ = window.emit("translation-complete", &path_str);
-            Ok(Some(path_str))
-        }
-        Ok(None) => {
-            let _ = window.emit("translation-not-found", ());
-            Ok(None)
-        }
-        Err(e) => {
-            let _ = window.emit("translation-error", &e.to_string());
-            Err(e)
-        }
-    }
+    let info = downloader::fetch_formats(&request.url, cookies.as_deref()).await?;
+    Ok(FetchedFormatsResponse {
+        formats: info.formats,
+        description: info.description,
+    })
 }
 
 #[derive(Deserialize)]
@@ -111,6 +42,10 @@ pub struct ProcessRequest {
     pub output_dir: String,
     pub cookies_path: Option<String>,
     pub do_translate: bool,
+    /// Raw YouTube description (from fetch_formats) for AI translation.
+    pub description: Option<String>,
+    /// Google AI Studio API key; enables writing `<stem>.description.ru.txt`.
+    pub ai_api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -189,6 +124,8 @@ pub async fn start_process(
         output_dir,
         cookies,
         do_translate: request.do_translate,
+        description: request.description,
+        ai_api_key: request.ai_api_key,
         progress: tx,
         events: Arc::new(window),
     };
