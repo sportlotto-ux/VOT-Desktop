@@ -278,7 +278,7 @@ async function loadAiModels(): Promise<void> {
     if (!models.includes(saved)) localStorage.setItem(AI_MODEL_STORAGE, models[0]);
     select.disabled = false;
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errMsg(err);
     select.innerHTML = `<option value="">Не удалось получить модели (${msg})</option>`;
     log(`Не удалось получить список моделей: ${msg}`);
   }
@@ -312,7 +312,7 @@ async function onTranslateDescription(): Promise<void> {
     );
   } catch (err: unknown) {
     showError(err);
-    log(`Ошибка перевода описания: ${err instanceof Error ? err.message : String(err)}`);
+    log(`Ошибка перевода описания: ${errMsg(err)}`);
   } finally {
     isTranslating = false;
     btn.textContent = 'Перевести описание';
@@ -351,7 +351,7 @@ async function onUpdateBinary(): Promise<void> {
     log(`${target.name} updated to v${installed}`);
   } catch (err: unknown) {
     showError(err);
-    log(`update failed: ${err instanceof Error ? err.message : String(err)}`);
+    log(`update failed: ${errMsg(err)}`);
   } finally {
     updatingName = null;
     renderUpdates();
@@ -698,16 +698,21 @@ function clearLog(): void {
   $<HTMLElement>('log-area').classList.add('hidden');
 }
 
+
+/** Tauri IPC errors arrive as {kind, message} objects — extract human text. */
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return JSON.stringify(err);
+}
+
 function showError(err: unknown): void {
   const box = $<HTMLElement>('error-box');
   box.classList.remove('hidden');
-  const msg =
-    err instanceof Error
-      ? err.message
-      : typeof err === 'string'
-        ? err
-        : JSON.stringify(err);
-  box.textContent = `Error: ${msg}`;
+  box.textContent = `Ошибка: ${errMsg(err)}`;
 }
 
 function hideError(): void {

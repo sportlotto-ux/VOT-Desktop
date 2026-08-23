@@ -21,6 +21,18 @@ Translate the following YouTube video description into Russian. \
 Keep the original formatting: preserve line breaks, links, hashtags and @mentions unchanged. \
 Do not add any commentary — return only the translation.\n\n---\n";
 
+/// Trim and sanity-check the API key without restricting its charset:
+/// Google may change the key format, and the key travels in a header.
+fn normalize_key(api_key: &str) -> AppResult<String> {
+    let key = api_key.trim();
+    if key.is_empty() || key.len() > 512 {
+        return Err(AppError::InvalidInput(
+            "AI Studio API key is empty or too long".into(),
+        ));
+    }
+    Ok(key.to_string())
+}
+
 /// Translate a video description to Russian. Returns the translated text.
 /// `model` — id from ListModels; unknown values fall back to `DEFAULT_MODEL`.
 pub async fn translate_description(
@@ -28,7 +40,8 @@ pub async fn translate_description(
     api_key: &str,
     model: Option<&str>,
 ) -> AppResult<String> {
-    if text.trim().is_empty() {
+    let text = text.trim();
+    if text.is_empty() {
         return Err(AppError::InvalidInput("description is empty".into()));
     }
     if text.len() > MAX_DESCRIPTION_BYTES {
@@ -36,17 +49,7 @@ pub async fn translate_description(
             "description is too large (over 64 KiB)".into(),
         ));
     }
-    let key = api_key.trim();
-    if key.is_empty()
-        || key.len() > 256
-        || !key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(AppError::InvalidInput(
-            "AI Studio API key has invalid format".into(),
-        ));
-    }
+    let key = normalize_key(api_key)?;
     // The value goes into the URL path — keep it strict even though it
     // normally comes from our own ListModels response.
     let model = match model {
@@ -70,11 +73,14 @@ pub async fn translate_description(
         "safetySettings": [],
     });
 
-    let url = format!("{GEMINI_API}/{model}:generateContent?key={key}");
+    let url = format!("{GEMINI_API}/{model}:generateContent");
     let response_text = tokio::time::timeout(HTTP_TIMEOUT, async {
         tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
             let mut reader = ureq::post(&url)
                 .header("Content-Type", "application/json")
+                // Header instead of ?key= query param: key charset doesn't
+                // matter and the key stays out of URLs/logs.
+                .header("x-goog-api-key", &key)
                 .send(body.to_string())?
                 .into_body()
                 .into_reader();
@@ -96,15 +102,13 @@ pub async fn translate_description(
 /// `generateContent`), e.g. ["gemini-3.5-flash", ...]. Used to populate the
 /// UI dropdown so we never hardcode model names.
 pub async fn list_models(api_key: &str) -> AppResult<Vec<String>> {
-    let key = api_key.trim();
-    if key.is_empty() || key.len() > 256 {
-        return Err(AppError::InvalidInput("API key is empty".into()));
-    }
-    let url = format!("{GEMINI_API}?key={key}&pageSize=1000");
+    let key = normalize_key(api_key)?;
+    let url = format!("{GEMINI_API}?pageSize=1000");
     let body = tokio::time::timeout(HTTP_TIMEOUT, async {
         tokio::task::spawn_blocking(move || -> Result<String, ureq::Error> {
             let mut reader = ureq::get(&url)
                 .header("Accept", "application/json")
+                .header("x-goog-api-key", &key)
                 .call()?
                 .into_body()
                 .into_reader();

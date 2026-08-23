@@ -1,6 +1,6 @@
 [package]
 name = "vot_desktop"
-version = "0.2.5"
+version = "0.2.6"
 description = "Desktop app for downloading YouTube videos with Yandex VOT voice translation"
 authors = ["VotDesktop contributors"]
 license = "MIT"
