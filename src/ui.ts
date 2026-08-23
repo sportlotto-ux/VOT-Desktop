@@ -266,7 +266,7 @@ let currentType = '';
 
 function populateSelectors(formats: Format[]): void {
   const containers = [...new Set(formats.map((f) => f.ext))].sort();
-  const types = ['Video+Audio', 'Video only', 'Audio only'];
+  const types = ['Video+Audio', 'Video', 'Audio'];
   // only show types that actually exist
   const availableTypes = types.filter((t) =>
     formats.some((f) => classify(f) === t),
@@ -321,10 +321,10 @@ function renderQuality(): void {
   const container = $<HTMLElement>('quality-group');
   container.innerHTML = '';
 
-  if (currentType === 'Audio only') {
+  if (currentType === 'Audio') {
     // Show bitrate options from yt-dlp format list
     const audioFormats = currentFormats.filter(
-      (f) => classify(f) === 'Audio only' && f.ext === currentContainer,
+      (f) => classify(f) === 'Audio' && f.ext === currentContainer,
     );
     if (audioFormats.length === 0) return;
 
@@ -339,7 +339,7 @@ function renderQuality(): void {
   // Video: show resolution presets + "Best" option
   const hasMatchingVideo = currentFormats.some((format) => {
     if (format.ext !== currentContainer || !format.has_video) return false;
-    return currentType !== 'Video only' || !format.has_audio;
+    return currentType !== 'Video' || !format.has_audio;
   });
   if (!hasMatchingVideo) {
     container.textContent = '— no matching video formats —';
@@ -348,7 +348,7 @@ function renderQuality(): void {
   const extFilter = currentContainer ? `[ext=${currentContainer}]` : '';
   const videoSelector = `bestvideo${extFilter}`;
   const bestSelector =
-    currentType === 'Video only'
+    currentType === 'Video'
       ? videoSelector
       : `${videoSelector}+bestaudio/best${extFilter}`;
   const bestItems = [
@@ -357,14 +357,14 @@ function renderQuality(): void {
       const h = parseInt(q);
       return currentFormats.some((f) => {
         if (f.ext !== currentContainer) return false;
-        if (currentType === 'Video only') {
+        if (currentType === 'Video') {
           return f.has_video && !f.has_audio && (f.quality.includes(`${h}p`) || f.quality.includes(`${h}0p`));
         }
         return (f.has_video) && (f.quality.includes(`${h}p`) || f.quality.includes(`${h}0p`));
       });
     }).map((q) => ({
       id:
-        currentType === 'Video only'
+        currentType === 'Video'
           ? `${videoSelector}[height<=${q.slice(0, -1)}]`
           : `${videoSelector}[height<=${q.slice(0, -1)}]+bestaudio/best${extFilter}`,
       label: q,
@@ -407,8 +407,8 @@ function renderRadioList(
 
 function classify(f: Format): string {
   if (f.has_video && f.has_audio) return 'Video+Audio';
-  if (f.has_video) return 'Video only';
-  return 'Audio only';
+  if (f.has_video) return 'Video';
+  return 'Audio';
 }
 
 function getSelectedFormatId(): string {
@@ -487,7 +487,7 @@ async function onProcess(): Promise<void> {
 
   const dir = outputDir ?? DEFAULT_OUTPUT_DIR;
   const doTranslate = $<HTMLInputElement>('mix-check').checked;
-  const kind: 'video' | 'audio' = currentType === 'Audio only' ? 'audio' : 'video';
+  const kind: 'video' | 'audio' = currentType === 'Audio' ? 'audio' : 'video';
   isProcessing = true;
 
   const btn = $<HTMLButtonElement>('process-btn');

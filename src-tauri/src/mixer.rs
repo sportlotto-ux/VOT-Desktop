@@ -60,17 +60,18 @@ fn output_profile(video_codec: Option<&str>) -> OutputProfile {
 
 /// Mix video + original audio + Russian voice translation into one output file.
 ///
-/// - `original_audio`: bestaudio from yt-dlp (e.g., .m4a)
-/// - `translation_mp3`: VOT output (.mp3)
-/// - `video`: video-only stream from yt-dlp
+/// Input layout expected by `filter_complex.txt`:
+///   0: `video` — video-only stream from yt-dlp
+///   1: `original_audio` — bestaudio (e.g., .m4a), original voice
+///   2: `translation_mp3` — VOT output (.mp3)
 /// - `output_dir`: directory receiving the resulting `.mixed.<ext>` file
 /// - `progress`: channel to send progress updates
 ///
 /// Returns the path to the mixed output file.
 pub async fn mix(
+    video: &Path,
     original_audio: &Path,
     translation_mp3: &Path,
-    video: &Path,
     output_dir: &Path,
     progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
 ) -> AppResult<PathBuf> {
