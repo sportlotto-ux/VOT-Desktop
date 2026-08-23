@@ -47,16 +47,18 @@ function render(): void {
     <div class="container">
       <h1>VotDesktop</h1>
 
-      <section class="input-section">
+      <!-- Остров 1: ссылка YouTube -->
+      <section class="card">
         <label for="url-input">YouTube URL</label>
         <input type="url" id="url-input"
           placeholder="https://youtube.com/watch?v=..." />
 
         <div class="row">
-          <button id="fetch-btn">Fetch Formats</button>
+          <button id="fetch-btn">Получить форматы</button>
         </div>
       </section>
 
+      <!-- Остров 2: форматы -->
       <section id="format-section" class="hidden">
         <div class="format-row">
           <div>
@@ -74,40 +76,50 @@ function render(): void {
         </div>
       </section>
 
-      <section class="options-section">
+      <!-- Остров 3: озвучка VOT -->
+      <section class="card vot-card">
         <div class="checkbox-row">
           <input type="checkbox" id="mix-check" checked />
           <label for="mix-check">Микшировать с русской озвучкой (Яндекс VOT)</label>
         </div>
+      </section>
 
+      <!-- Остров 4: перевод описания через AI Studio -->
+      <section class="card ai-card">
         <div class="option-row">
-          <span class="label">API-ключ AI Studio</span>
-          <input type="password" id="ai-key-input" class="text-input"
+          <span class="label">API-ключ</span>
+          <input type="password" id="ai-key-input"
             placeholder="Вставьте ключ с aistudio.google.com/apikey" autocomplete="off" />
         </div>
-        <p class="hint">Ключ нужен только для перевода описаний. Получить бесплатно: aistudio.google.com/apikey</p>
-
-        <div class="option-row sub-option">
+        <p class="hint left">Нужен только для перевода описания. Получить бесплатно: aistudio.google.com/apikey</p>
+        <div class="option-row">
           <span class="label">Модель ИИ</span>
-          <select id="ai-model-select" class="text-input" disabled>
+          <select id="ai-model-select" disabled>
             <option value="">Введите API-ключ…</option>
           </select>
           <button id="translate-desc-btn" class="small" disabled>Перевести описание</button>
         </div>
+      </section>
 
+      <!-- Острова 5+: настройки -->
+      <section class="card">
         <div class="option-row">
           <span class="label">Cookies</span>
           <span id="cookies-status" class="value">нет</span>
           <button id="cookies-btn" class="small">Выбрать файл...</button>
           <button id="cookies-clear" class="small hidden">Сбросить</button>
         </div>
+      </section>
 
+      <section class="card">
         <div class="option-row">
           <span class="label">Папка загрузки</span>
           <span id="output-path" class="value">${DEFAULT_OUTPUT_DIR}</span>
           <button id="output-btn" class="small">Выбрать...</button>
         </div>
+      </section>
 
+      <section class="card">
         <div class="option-row">
           <span class="label">Компоненты</span>
           <span id="components-status" class="value">проверка…</span>

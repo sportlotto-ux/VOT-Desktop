@@ -104,18 +104,18 @@ button.primary:hover {
   text-align: center;
 }
 
-.options-section .option-row {
+.option-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-.options-section .option-row:last-child {
+.option-row:last-child {
   margin-bottom: 0;
 }
 
-.options-section .label {
+.option-row .label {
   font-size: 12px;
   font-weight: 500;
   color: #666;
@@ -123,7 +123,7 @@ button.primary:hover {
   min-width: 60px;
 }
 
-.options-section .value {
+.value {
   flex: 1;
   font-size: 13px;
   color: #333;
@@ -132,12 +132,12 @@ button.primary:hover {
   white-space: nowrap;
 }
 
-.options-section .value.missing {
+.value.missing {
   color: #a02020;
   white-space: normal;
 }
 
-.options-section .value.stale {
+.value.stale {
   color: #c07000;
 }
 
@@ -275,11 +275,37 @@ progress::-webkit-progress-value {
   display: none;
 }
 
-/* Поле API-ключа визуально подчинено чекбоксу ИИ-перевода */
-.options-section .sub-option {
-  margin-left: 28px;
+
+
+/* ---- Острова (карточки) ---- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.value.missing {
-  color: #a02020;
+.vot-card .checkbox-row,
+.ai-card .checkbox-row {
+  margin-top: 0;
+}
+
+.ai-card .hint.left {
+  text-align: left;
+  margin: 0;
+}
+
+input[type='password'] {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+input[type='password']:focus {
+  outline: none;
+  border-color: #4a90d9;
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.2);
 }
