@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::types::{Format, ProgressEvent, YtDlpVideoInfo};
+use crate::types::{FetchedVideoInfo, Format, ProgressEvent, YtDlpVideoInfo};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
@@ -17,7 +17,7 @@ async fn js_runtime_arg() -> AppResult<(String, String)> {
     Ok(("--js-runtimes".into(), format!("deno:{}", deno.display())))
 }
 
-pub async fn fetch_formats(url: &str, cookies: Option<&Path>) -> AppResult<Vec<Format>> {
+pub async fn fetch_formats(url: &str, cookies: Option<&Path>) -> AppResult<FetchedVideoInfo> {
     validate_url(url)?;
 
     let mut cmd = Command::new(crate::binaries::ensure_ytdlp().await?);
@@ -60,7 +60,10 @@ pub async fn fetch_formats(url: &str, cookies: Option<&Path>) -> AppResult<Vec<F
             "yt-dlp returned an empty format list".into(),
         ));
     }
-    Ok(formats)
+    Ok(FetchedVideoInfo {
+        formats,
+        description: info.description,
+    })
 }
 
 pub async fn download(
@@ -89,7 +92,10 @@ async fn download_inner(
     validate_format_id(format_id)?;
     std::fs::create_dir_all(output_dir).map_err(AppError::Io)?;
 
-    let output_path = output_dir.join("%(title).100s_%(id)s.%(ext)s");
+    // Per-video folder: <output_dir>/<title>_<id>/<title>_<id>.<ext>.
+    // yt-dlp creates intermediate directories from the output template.
+    let stem = "%(title).100s_%(id)s";
+    let output_path = output_dir.join(format!("{stem}/{stem}.%(ext)s"));
     let started_at = SystemTime::now();
 
     let mut cmd = Command::new(crate::binaries::ensure_ytdlp().await?);
@@ -193,7 +199,7 @@ async fn download_inner(
     // --print after_move:filepath gives the definitive final path.
     // Fallback: scan output dir for files containing the video ID,
     // sorted by modification time (newest).
-    let video_id = extract_video_id(url).unwrap_or("video");
+    let video_id = extract_video_id(url).unwrap_or_else(|| "video".into());
     let path = final_path
         .filter(|p| p.exists())
         .or_else(|| {
@@ -203,7 +209,7 @@ async fn download_inner(
                 .filter(|e| {
                     let p = e.path();
                     let name = p.to_string_lossy();
-                    name.contains(video_id)
+                    name.contains(video_id.as_str())
                         && !name.ends_with(".part")
                         && !name.contains(".mixed.")
                         && e.file_type().ok().is_some_and(|t| t.is_file())
@@ -237,19 +243,19 @@ fn parse_ytdlp_percent(line: &str) -> Option<f64> {
 
 /// Extract video ID from a YouTube URL.
 /// e.g. "https://youtube.com/watch?v=ABC123" -> "ABC123"
-fn extract_video_id(url: &str) -> Option<&str> {
-    let url = url.trim();
-    if let Some(pos) = url.find("v=") {
-        let after = &url[pos + 2..];
-        let end = after.find(['&', '#', '?']).unwrap_or(after.len());
-        Some(&after[..end])
-    } else if let Some(pos) = url.find("youtu.be/") {
-        let after = &url[pos + 9..];
-        let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-        Some(&after[..end])
-    } else {
-        None
+fn extract_video_id(url: &str) -> Option<String> {
+    let parsed = Url::parse(url.trim()).ok()?;
+    if parsed.host_str()? == "youtu.be" {
+        return parsed
+            .path_segments()?
+            .next()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
     }
+    parsed
+        .query_pairs()
+        .find(|(k, _)| k == "v")
+        .map(|(_, v)| v.into_owned())
 }
 
 pub(crate) fn validate_url(url: &str) -> AppResult<()> {
@@ -276,9 +282,11 @@ pub(crate) fn validate_url(url: &str) -> AppResult<()> {
 
 fn validate_format_id(id: &str) -> AppResult<()> {
     forbid_chars(id)?;
-    if id.is_empty() || id.len() > 128 {
+    // A leading '-' would make yt-dlp parse the value as an option flag
+    // (argument injection, e.g. "--exec").
+    if id.is_empty() || id.len() > 128 || id.starts_with('-') {
         return Err(AppError::InvalidInput(
-            "format ID must be 1-128 characters".into(),
+            "format ID must be 1-128 characters and must not start with '-'".into(),
         ));
     }
     let allowed = |c: char| {
@@ -363,10 +371,21 @@ mod tests {
     #[test]
     fn extracts_video_ids() {
         assert_eq!(
-            extract_video_id("https://youtube.com/watch?v=abc&x=1"),
+            extract_video_id("https://youtube.com/watch?v=abc&x=1").as_deref(),
             Some("abc")
         );
-        assert_eq!(extract_video_id("https://youtu.be/abc?t=1"), Some("abc"));
+        assert_eq!(
+            extract_video_id("https://youtu.be/abc?t=1").as_deref(),
+            Some("abc")
+        );
+    }
+
+    #[test]
+    fn rejects_format_ids_starting_with_dash() {
+        use super::validate_format_id;
+        assert!(validate_format_id("137+140").is_ok());
+        assert!(validate_format_id("--exec=touch /tmp/pwned").is_err());
+        assert!(validate_format_id("-o/etc/passwd").is_err());
     }
 
     #[cfg(unix)]

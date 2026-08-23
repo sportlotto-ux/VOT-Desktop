@@ -8,6 +8,7 @@ mod commands;
 mod deps;
 mod downloader;
 mod error;
+mod gemini;
 mod mixer;
 mod pipeline;
 mod process;
@@ -57,10 +58,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::ping,
             commands::fetch_formats,
-            commands::start_download,
-            commands::start_translate,
             commands::start_process,
             commands::cookies_info,
             commands::check_updates,
