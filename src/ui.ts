@@ -18,13 +18,36 @@ const DEFAULT_OUTPUT_DIR = '~/Videos/VotDesktop';
 const STALE_COOKIES_DAYS = 30;
 const AI_KEY_STORAGE = 'vot-ai-api-key';
 const AI_MODEL_STORAGE = 'vot-ai-model';
+// Persisted user preferences (container/type/quality/VOT/output dir).
+const PREFS_STORAGE = 'vot-prefs';
+
+interface Prefs {
+  container?: string;
+  type?: string;
+  quality?: string;
+  mix?: boolean;
+  outputDir?: string;
+}
+
+function loadPrefs(): Prefs {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_STORAGE) ?? '{}') as Prefs;
+  } catch {
+    return {};
+  }
+}
+
+function savePrefs(patch: Prefs): void {
+  const merged = { ...loadPrefs(), ...patch };
+  localStorage.setItem(PREFS_STORAGE, JSON.stringify(merged));
+}
 
 let currentFormats: Format[] = [];
 let currentDescription: string | null = null;
 /** Parent dir of the last downloaded artifact — where description.ru.txt goes. */
 let lastResultDir: string | null = null;
 let cookiesPath: string | null = null;
-let outputDir: string | null = null;
+let outputDir: string | null = loadPrefs().outputDir ?? null;
 let isProcessing = false;
 let isTranslating = false;
 /** True when Yandex has no cached translation — the file is saved without  озвучки. */
@@ -54,6 +77,7 @@ export function init(): void {
 
 function render(): void {
   const app = $<HTMLElement>('app');
+  const savedOutputDir = loadPrefs().outputDir;
   app.innerHTML = `
     <div class="container">
       <div class="header-row">
@@ -129,7 +153,7 @@ function render(): void {
       <section class="card">
         <div class="option-row">
           <span class="label">Папка загрузки</span>
-          <span id="output-path" class="value">${DEFAULT_OUTPUT_DIR}</span>
+          <span id="output-path" class="value">${savedOutputDir ?? DEFAULT_OUTPUT_DIR}</span>
           <button id="output-btn" class="small">Выбрать...</button>
         </div>
       </section>
@@ -213,6 +237,13 @@ function bindEvents(): void {
         onProcess();
       }
     }
+  });
+
+  // Persist the VOT mix checkbox.
+  const mixCheck = $<HTMLInputElement>('mix-check');
+  mixCheck.checked = loadPrefs().mix ?? true;
+  mixCheck.addEventListener('change', () => {
+    savePrefs({ mix: mixCheck.checked });
   });
 
   // Ctrl+V — вставить URL в поле ввода из буфера обмена.
@@ -426,11 +457,16 @@ function populateSelectors(formats: Format[]): void {
     formats.some((f) => classify(f) === t),
   );
 
-  currentType = availableTypes[0] ?? '';
-  currentContainer =
-    containers.find((container) =>
-      formats.some((format) => format.ext === container && classify(format) === currentType),
-    ) ?? containers[0] ?? '';
+  // Restore the user's last choice when it still exists for this video.
+  const prefs = loadPrefs();
+  const savedType = prefs.type && availableTypes.includes(prefs.type) ? prefs.type : '';
+  currentType = savedType || availableTypes[0] || '';
+  const typeContainers = containers.filter((container) =>
+    formats.some((format) => format.ext === container && classify(format) === currentType),
+  );
+  const savedContainer =
+    prefs.container && typeContainers.includes(prefs.container) ? prefs.container : '';
+  currentContainer = savedContainer || typeContainers[0] || containers[0] || '';
 
   const syncContainerWithType = (): void => {
     const typeContainers = containers.filter((container) =>
@@ -452,10 +488,12 @@ function populateSelectors(formats: Format[]): void {
 
   renderRadioList($('container-group'), containers.map(c => ({ id: c, label: c })), currentContainer, () => {
     currentContainer = getSelectedFromGroup('container-group');
+    savePrefs({ container: currentContainer });
     renderQuality();
   });
   renderRadioList($('type-group'), availableTypes.map(t => ({ id: t, label: t })), currentType, () => {
     currentType = getSelectedFromGroup('type-group');
+    savePrefs({ type: currentType });
     syncContainerWithType();
     renderQuality();
   });
@@ -486,7 +524,11 @@ function renderQuality(): void {
       id: f.id,
       label: `${f.quality} (${f.filesize})`,
     }));
-    renderRadioList(container, items, items[0].id, () => {});
+    const savedQuality = loadPrefs().quality;
+    const selected = items.find((i) => i.id === savedQuality) ?? items[0];
+    renderRadioList(container, items, selected.id, () => {
+      savePrefs({ quality: getSelectedFromGroup('quality-group') });
+    });
     return;
   }
 
@@ -528,7 +570,11 @@ function renderQuality(): void {
     container.textContent = '— no matching quality —';
     return;
   }
-  renderRadioList(container, bestItems, bestItems[0].id, () => {});
+  const savedQuality = loadPrefs().quality;
+  const selected = bestItems.find((i) => i.id === savedQuality) ?? bestItems[0];
+  renderRadioList(container, bestItems, selected.id, () => {
+    savePrefs({ quality: getSelectedFromGroup('quality-group') });
+  });
 }
 
 function renderRadioList(
@@ -612,6 +658,7 @@ async function onPickOutput(): Promise<void> {
   const path = await pickOutputDir();
   if (path) {
     outputDir = path;
+    savePrefs({ outputDir: path });
     $<HTMLElement>('output-path').textContent = path;
   }
 }
