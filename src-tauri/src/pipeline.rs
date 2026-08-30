@@ -163,7 +163,9 @@ async fn run_video(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artif
     );
 
     events.step("Getting Yandex voice translation (VOT)...");
-    match crate::translator::fetch_translation(&ctx.url, download_dir).await {
+    match crate::translator::fetch_translation(&ctx.url, download_dir, Some(ctx.progress.clone()))
+        .await
+    {
         Ok(Some(path)) => {
             let translation = Artifact::new(path, ArtifactKind::Translation);
             events.translation_complete(&translation.path.to_string_lossy());

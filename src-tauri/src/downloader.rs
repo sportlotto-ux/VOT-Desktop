@@ -126,16 +126,41 @@ async fn download_inner(
         .spawn()
         .map_err(|e| AppError::Subprocess(format!("failed to spawn yt-dlp: {e}")))?;
 
-    // Read stderr concurrently so the pipe doesn't fill up.
+    // Read stderr concurrently so the pipe doesn't fill up, AND stream each
+    // line to the UI log: retries/errors ("[download] Got error: HTTP Error
+    // 429 ... Retrying (3/10)") go to stderr while stdout stays silent —
+    // without this the log appears frozen during retry backoffs.
     let stderr = child
         .stderr
         .take()
         .ok_or_else(|| AppError::Subprocess("failed to capture yt-dlp stderr".into()))?;
-    let stderr_buf = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let stderr_buf_clone = stderr_buf.clone();
+    let stderr_progress = progress.clone();
     let stderr_task = tokio::spawn(async move {
-        let buf = crate::process::read_capped(stderr, MAX_STDERR_BYTES).await;
-        *stderr_buf_clone.lock().await = buf;
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        let mut retained: Vec<u8> = Vec::with_capacity(8192);
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if retained.len() < MAX_STDERR_BYTES {
+                        retained.extend_from_slice(line.as_bytes());
+                    }
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        if let Some(ref tx) = stderr_progress {
+                            let _ = tx.send(ProgressEvent {
+                                operation: "download".into(),
+                                percent: 0.0,
+                                message: format!("yt-dlp: {trimmed}"),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        retained
     });
 
     // Stream stdout for progress and destination detection.
@@ -186,8 +211,7 @@ async fn download_inner(
         .await
         .map_err(|e| AppError::Subprocess(format!("wait yt-dlp: {e}")))?;
 
-    stderr_task.await.ok();
-    let stderr_bytes = stderr_buf.lock().await;
+    let stderr_bytes = stderr_task.await.unwrap_or_default();
     let stderr_text = String::from_utf8_lossy(&stderr_bytes);
 
     if !status.success() {
@@ -403,5 +427,36 @@ mod tests {
         assert!(validate_cookies_path(&link).is_err());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Network-dependent: exercises the real download path including stderr
+    /// streaming to the progress channel. Run with `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn downloads_audio_and_streams_events() {
+        use crate::types::ProgressEvent;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        let (tx, mut rx) = unbounded_channel::<ProgressEvent>();
+        let logger = tokio::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                println!("[{}] {:.0}% {}", ev.operation, ev.percent, ev.message);
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!("vot-live-dl-{}", std::process::id()));
+        let path = super::download(
+            "https://youtube.com/watch?v=jNQXAC9IVRw",
+            "140",
+            &dir,
+            None,
+            Some(tx),
+        )
+        .await
+        .expect("download must succeed");
+
+        assert!(path.is_file(), "downloaded file must exist: {path:?}");
+        logger.abort();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

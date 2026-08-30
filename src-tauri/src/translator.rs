@@ -1,64 +1,110 @@
 use crate::error::{AppError, AppResult};
+use crate::types::ProgressEvent;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-const VOT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Upper bound for the whole VOT stage: vot-cli-live must download the video's
+/// audio itself, so long videos need considerably more than the old 300s.
+const VOT_TIMEOUT: Duration = Duration::from_secs(600);
 const VOT_PACKAGE: &str = "npm:vot-cli-live@1.7.5";
 const MAX_STDERR_BYTES: usize = 4 * 1024 * 1024;
+/// How often the heartbeat event is emitted while vot-cli-live is running.
+const VOT_HEARTBEAT: Duration = Duration::from_secs(5);
 static NEXT_WORK_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Run vot-cli-live via deno to get a Russian voice translation for the
 /// given YouTube video.
 ///
+/// `progress` receives heartbeat and stderr-line events so the UI log keeps
+/// moving during this otherwise silent stage.
+///
 /// Returns `Ok(Some(mp3_path))` on success, `Ok(None)` if vot-cli-live
 /// exits cleanly but no translation was found (fallback — video not in
 /// Yandex cache), or `Err(...)` on subprocess/timeout/io failure.
-pub async fn fetch_translation(video_url: &str, output_dir: &Path) -> AppResult<Option<PathBuf>> {
+pub async fn fetch_translation(
+    video_url: &str,
+    output_dir: &Path,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+) -> AppResult<Option<PathBuf>> {
     crate::downloader::validate_url(video_url)?;
     std::fs::create_dir_all(output_dir).map_err(AppError::Io)?;
     let work_dir = unique_work_dir(output_dir)?;
 
+    // Heartbeat keeps the UI log alive while vot-cli-live works silently.
+    let heartbeat = progress
+        .as_ref()
+        .map(|tx| tokio::spawn(vot_heartbeat(tx.clone())));
+
     let result = timeout(
         VOT_TIMEOUT,
-        run_vot_command(video_url, output_dir, &work_dir),
+        run_vot_command(video_url, output_dir, &work_dir, progress),
     )
     .await;
+
+    if let Some(task) = heartbeat {
+        task.abort();
+    }
     let _ = std::fs::remove_dir_all(&work_dir);
 
     match result {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(AppError::Subprocess(msg))) if is_no_translation(&msg) => {
-            // vot-cli-live exits with `Downloading failed! Link "..." not found`
-            // when Yandex has no translation cached — normal fallback.
+            // vot-cli-live reports "no cached translation on Yandex side" in
+            // two shapes (see `is_no_translation`) — normal fallback.
             Ok(None)
         }
         Ok(Err(e)) => Err(e),
         Err(_) => {
             // Timeout occurred — handle gracefully.
-            Err(AppError::Subprocess(
-                "VOT translation timed out after 300 seconds".into(),
-            ))
+            Err(AppError::Subprocess(format!(
+                "VOT translation timed out after {} seconds",
+                VOT_TIMEOUT.as_secs()
+            )))
         }
     }
 }
 
-/// Match the exact shape of vot-cli-live's "no cached translation" failure:
-/// `Downloading failed! Link "..." not found`.
+/// Periodic "still alive" event so the user sees the stage is running.
+async fn vot_heartbeat(tx: tokio::sync::mpsc::UnboundedSender<ProgressEvent>) {
+    let mut interval = tokio::time::interval(VOT_HEARTBEAT);
+    interval.tick().await; // first tick fires immediately — skip it
+    let mut elapsed: u64 = 0;
+    loop {
+        interval.tick().await;
+        elapsed += VOT_HEARTBEAT.as_secs();
+        let _ = tx.send(ProgressEvent {
+            operation: "vot".into(),
+            percent: 0.0,
+            message: format!(
+                "VOT: waiting for Yandex translation... {elapsed}s / {}s limit",
+                VOT_TIMEOUT.as_secs()
+            ),
+        });
+    }
+}
+
+/// Match the shapes of vot-cli-live's "no cached translation" failures:
+///  - older versions: `Downloading failed! Link "..." not found`
+///  - current (1.7.5): `Translation not available for this video`
+///
 /// A bare `contains("not found")` would also swallow unrelated infra errors
 /// ("Module not found", etc.), silently skipping real failures.
 fn is_no_translation(stderr_msg: &str) -> bool {
     let m = stderr_msg.to_lowercase();
-    m.contains("downloading failed!") && m.contains("not found")
+    m.contains("translation not available")
+        || (m.contains("downloading failed!") && m.contains("not found"))
 }
 
 async fn run_vot_command(
     video_url: &str,
     output_dir: &Path,
     work_dir: &Path,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
 ) -> AppResult<Option<PathBuf>> {
     let home = std::env::var_os("HOME").ok_or_else(|| {
         AppError::Subprocess("HOME is not set, cannot resolve the deno cache".into())
@@ -99,8 +145,35 @@ async fn run_vot_command(
         .stderr
         .take()
         .ok_or_else(|| AppError::Subprocess("failed to capture deno stderr".into()))?;
-    let stderr_task =
-        tokio::spawn(async move { crate::process::read_capped(stderr, MAX_STDERR_BYTES).await });
+    // Stream stderr lines to the UI log (vot-cli-live reports its progress
+    // there) while retaining a capped buffer for error reporting.
+    let stderr_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        let mut retained: Vec<u8> = Vec::with_capacity(8192);
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if retained.len() < MAX_STDERR_BYTES {
+                        retained.extend_from_slice(line.as_bytes());
+                    }
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        if let Some(ref tx) = progress {
+                            let _ = tx.send(ProgressEvent {
+                                operation: "vot".into(),
+                                percent: 0.0,
+                                message: format!("VOT: {trimmed}"),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        retained
+    });
     let status = child
         .wait()
         .await
@@ -171,4 +244,32 @@ fn unique_work_dir(output_dir: &Path) -> AppResult<PathBuf> {
     Err(AppError::Subprocess(
         "could not allocate a unique VOT work directory".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_no_translation;
+
+    #[test]
+    fn matches_no_translation_shapes() {
+        // vot-cli-live >= 1.7.x
+        assert!(is_no_translation(
+            "vot-cli-live failed: Translation not available for this video"
+        ));
+        // older vot-cli-live shape
+        assert!(is_no_translation(
+            "vot-cli-live failed: Downloading failed! Link \"https://...\" not found"
+        ));
+    }
+
+    #[test]
+    fn does_not_swallow_real_errors() {
+        assert!(!is_no_translation(
+            "vot-cli-live failed: error: Module not found"
+        ));
+        assert!(!is_no_translation(
+            "vot-cli-live failed: network unreachable"
+        ));
+        assert!(!is_no_translation(""));
+    }
 }
