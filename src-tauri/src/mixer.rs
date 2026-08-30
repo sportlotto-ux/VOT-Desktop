@@ -26,6 +26,9 @@ const MIX_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STDERR_BYTES: usize = 4 * 1024 * 1024;
 const FILTER_COMPLEX: &str = include_str!("filter_complex.txt");
+/// Same loudness/volume recipe as `FILTER_COMPLEX`, but for two inputs:
+///  0: `original_audio`, 1: `translation_mp3`
+const FILTER_COMPLEX_AUDIO: &str = "[0:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100,volume=0.33[en];[1:a]loudnorm=I=-16:TP=-0.5:LRA=11,aresample=44100,pan=stereo|c0=c0|c1=c0[ru];[ru][en]amix=inputs=2:duration=longest:normalize=0[mix]";
 
 /// Output container/codec pair chosen from the video stream's codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +63,7 @@ fn output_profile(video_codec: Option<&str>) -> OutputProfile {
 
 /// Mix video + original audio + Russian voice translation into one output file.
 ///
-/// Input layout expected by `filter_complex.txt`:
+/// Input layout expected by `FILTER_COMPLEX`:
 ///   0: `video` — video-only stream from yt-dlp
 ///   1: `original_audio` — bestaudio (e.g., .m4a), original voice
 ///   2: `translation_mp3` — VOT output (.mp3)
@@ -90,16 +93,51 @@ pub async fn mix(
         .to_string();
     let output = output_dir.join(format!("{stem}.mixed.{}", profile.container));
 
+    let spec = FfmpegMix {
+        inputs: vec![video, original_audio, translation_mp3],
+        filter: FILTER_COMPLEX,
+        map_video: Some("0:v"),
+        audio_codec: profile.audio_codec,
+    };
+    timeout(MIX_TIMEOUT, run_ffmpeg_mix(&spec, video, &output, progress))
+        .await
+        .map_err(|_| AppError::Subprocess("ffmpeg mix timed out".into()))??;
+
+    Ok(output)
+}
+
+/// Audio-only mix: original audio + Russian voice translation → `.mixed.m4a`.
+///
+/// Input layout expected by `FILTER_COMPLEX_AUDIO`:
+///   0: `original_audio`, 1: `translation_mp3`.
+///
+/// Same loudness/volume recipe as the video mix, but produces an audio file
+/// (no video stream) so the "mix with Yandex  ozvuchka" flag works for audio
+/// downloads too.
+pub async fn mix_audio(
+    original_audio: &Path,
+    translation_mp3: &Path,
+    output_dir: &Path,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+) -> AppResult<PathBuf> {
+    std::fs::create_dir_all(output_dir).map_err(AppError::Io)?;
+
+    let stem = original_audio
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let output = output_dir.join(format!("{stem}.mixed.m4a"));
+
+    let spec = FfmpegMix {
+        inputs: vec![original_audio, translation_mp3],
+        filter: FILTER_COMPLEX_AUDIO,
+        map_video: None,
+        audio_codec: "aac",
+    };
     timeout(
         MIX_TIMEOUT,
-        mix_inner(
-            original_audio,
-            translation_mp3,
-            video,
-            &output,
-            profile,
-            progress,
-        ),
+        run_ffmpeg_mix(&spec, original_audio, &output, progress),
     )
     .await
     .map_err(|_| AppError::Subprocess("ffmpeg mix timed out".into()))??;
@@ -107,38 +145,42 @@ pub async fn mix(
     Ok(output)
 }
 
-async fn mix_inner(
-    original_audio: &Path,
-    translation_mp3: &Path,
-    video: &Path,
+/// What a mix run needs: input files, filter graph, output mapping and codec.
+struct FfmpegMix<'a> {
+    inputs: Vec<&'a Path>,
+    /// filter_complex graph; must produce a `[mix]` output label.
+    filter: &'a str,
+    /// `Some("0:v")` for video outputs, `None` for audio-only.
+    map_video: Option<&'a str>,
+    audio_codec: &'a str,
+}
+
+async fn run_ffmpeg_mix(
+    spec: &FfmpegMix<'_>,
+    duration_src: &Path,
     output: &Path,
-    profile: OutputProfile,
     progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
 ) -> AppResult<()> {
-    // Get input video duration for progress estimation.
-    let total_secs = timeout(PROBE_TIMEOUT, get_duration_secs(video))
+    // Get input duration for progress estimation.
+    let total_secs = timeout(PROBE_TIMEOUT, get_duration_secs(duration_src))
         .await
         .ok()
         .flatten()
         .unwrap_or(300.0);
 
     let mut cmd = Command::new(FFMPEG);
-    cmd.arg("-i")
-        .arg(video) // 0: video (no audio)
-        .arg("-i")
-        .arg(original_audio) // 1: original audio
-        .arg("-i")
-        .arg(translation_mp3) // 2: translation
-        .arg("-filter_complex")
-        .arg(FILTER_COMPLEX.trim_end())
-        .arg("-map")
-        .arg("0:v")
-        .arg("-map")
-        .arg("[mix]")
-        .arg("-c:v")
-        .arg("copy")
-        .arg("-c:a")
-        .arg(profile.audio_codec)
+    for input in &spec.inputs {
+        cmd.arg("-i").arg(input);
+    }
+    cmd.arg("-filter_complex").arg(spec.filter.trim_end());
+    if let Some(map) = spec.map_video {
+        cmd.arg("-map").arg(map).arg("-map").arg("[mix]");
+        cmd.arg("-c:v").arg("copy");
+    } else {
+        cmd.arg("-map").arg("[mix]");
+    }
+    cmd.arg("-c:a")
+        .arg(spec.audio_codec)
         .arg("-b:a")
         .arg("192k")
         .arg("-progress")

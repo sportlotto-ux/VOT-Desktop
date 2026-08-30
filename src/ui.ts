@@ -27,6 +27,8 @@ let cookiesPath: string | null = null;
 let outputDir: string | null = null;
 let isProcessing = false;
 let isTranslating = false;
+/** True when Yandex has no cached translation — the file is saved without  озвучки. */
+let missingTranslation = false;
 
 function getAiKey(): string {
   return localStorage.getItem(AI_KEY_STORAGE)?.trim() ?? '';
@@ -250,6 +252,13 @@ function bindRuntimeListeners(): void {
     log(`Ошибка перевода описания: ${event.payload}`);
   });
 
+  // Yandex has no cached  озвучка for this video — explain the fallback so the
+  // user knows why the mix checkbox produced a file without  озвучки.
+  void listen('translation-not-found', () => {
+    missingTranslation = true;
+    log('Озвучка Яндекса для этого видео не найдена — будет сохранена оригинальная дорожка.');
+  });
+
   // Available runtime binary updates (yt-dlp/deno), ADR-012.
   void listen<UpdateInfo[]>('update-available', (event) => {
     pendingUpdates = event.payload;
@@ -448,22 +457,11 @@ function populateSelectors(formats: Format[]): void {
   renderRadioList($('type-group'), availableTypes.map(t => ({ id: t, label: t })), currentType, () => {
     currentType = getSelectedFromGroup('type-group');
     syncContainerWithType();
-    updateMixAvailability();
     renderQuality();
   });
 
-  updateMixAvailability();
   $<HTMLElement>('format-section').classList.remove('hidden');
   renderQuality();
-}
-
-/** Yandex mix only applies to video downloads — dim the checkbox for Audio. */
-function updateMixAvailability(): void {
-  const box = $<HTMLInputElement>('mix-check');
-  box.disabled = currentType === 'Audio';
-  box.title = box.disabled
-    ? 'Озвучка Яндекса неприменима к аудио-дорожке'
-    : '';
 }
 
 const QUALITY_LEVELS = ['2160p', '1440p', '1080p', '720p', '480p', '360p'];
@@ -645,6 +643,7 @@ async function onProcess(): Promise<void> {
   const doTranslate = $<HTMLInputElement>('mix-check').checked;
   const kind: 'video' | 'audio' = currentType === 'Audio' ? 'audio' : 'video';
   isProcessing = true;
+  missingTranslation = false;
 
   const btn = $<HTMLButtonElement>('process-btn');
   btn.disabled = true;
@@ -681,11 +680,14 @@ async function onProcess(): Promise<void> {
     progressText.textContent = 'Готово!';
 
     if (result.mixed_path) {
-      showResult(`Видео с переводом сохранено: ${result.mixed_path}`);
+      showResult(`Файл с озвучкой сохранён: ${result.mixed_path}`);
     } else {
       let resultMsg = `Файл сохранён: ${result.video_path}`;
       if (result.translation_path) {
         resultMsg += `\nОзвучка: ${result.translation_path}`;
+      } else if (missingTranslation) {
+        resultMsg +=
+          '\n⚠ Озвучка Яндекса для этого видео не найдена — сохранена оригинальная дорожка. Озвучка доступна для видео из кэша Яндекса.';
       }
       showResult(resultMsg);
     }
@@ -716,16 +718,47 @@ function clearProgress(): void {
   $<HTMLElement>('progress-section').classList.add('hidden');
 }
 
-function log(line: string): void {
+const LOG_MAX_LINES = 500;
+const LOG_FLUSH_INTERVAL_MS = 200;
+let logBuffer: string[] = [];
+let logFlushTimer: ReturnType<typeof setTimeout> | undefined;
+let logLineCount = 0;
+
+function flushLogBuffer(): void {
+  logFlushTimer = undefined;
+  if (logBuffer.length === 0) return;
   const header = $<HTMLElement>('log-header');
   const area = $<HTMLElement>('log-area');
   header.classList.remove('hidden');
   area.classList.remove('hidden');
-  area.textContent += line + '\n';
-  area.scrollTop = area.scrollHeight;
+  // Single textContent write per flush instead of O(n²) appends —
+  // thousands of yt-dlp/VOT lines used to freeze the webview.
+  const wasAtBottom = area.scrollTop + area.clientHeight >= area.scrollHeight - 4;
+  area.textContent += logBuffer.join('\n') + '\n';
+  logLineCount += logBuffer.length;
+  logBuffer = [];
+  if (logLineCount > LOG_MAX_LINES) {
+    const lines = area.textContent.split('\n');
+    area.textContent = lines.slice(-LOG_MAX_LINES).join('\n');
+    logLineCount = LOG_MAX_LINES;
+  }
+  if (wasAtBottom) area.scrollTop = area.scrollHeight;
+}
+
+function log(line: string): void {
+  logBuffer.push(line);
+  if (logFlushTimer === undefined) {
+    logFlushTimer = setTimeout(flushLogBuffer, LOG_FLUSH_INTERVAL_MS);
+  }
 }
 
 function clearLog(): void {
+  if (logFlushTimer !== undefined) {
+    clearTimeout(logFlushTimer);
+    logFlushTimer = undefined;
+  }
+  logBuffer = [];
+  logLineCount = 0;
   $<HTMLElement>('log-area').textContent = '';
   $<HTMLElement>('log-header').classList.add('hidden');
   $<HTMLElement>('log-area').classList.add('hidden');

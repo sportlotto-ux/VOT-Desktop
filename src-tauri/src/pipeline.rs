@@ -118,13 +118,11 @@ impl ProcessResponse {
 pub async fn run_process(ctx: ProcessContext) -> AppResult<ProcessResponse> {
     std::fs::create_dir_all(&ctx.output_dir).map_err(AppError::Io)?;
 
-    // Only the video+translation path needs an isolated work dir: mixing
-    // publishes the finished folder out of it before returning. Audio
-    // downloads must go straight to the output dir — a work-dir artifact
-    // would be deleted by the cleanup below while the UI still reports it
-    // as successfully saved (regression: "Видео сохранено" pointing into a
-    // removed .vot-process-* folder).
-    let needs_work_dir = ctx.do_translate && ctx.kind == SelectionKind::Video;
+    // Mixing runs (checkbox "mix with Russian ozvuchka") need an isolated work
+    // dir: intermediate streams land there and only the finished mixed file is
+    // published into the user's output dir. Works the same for video and audio
+    // downloads — the mix step is type-agnostic.
+    let needs_work_dir = ctx.do_translate;
     let (work_dir, download_dir) = if needs_work_dir {
         let work = create_work_dir(&ctx.output_dir)?;
         (Some(work.clone()), work)
@@ -132,52 +130,63 @@ pub async fn run_process(ctx: ProcessContext) -> AppResult<ProcessResponse> {
         (None, ctx.output_dir.clone())
     };
 
-    let result = match ctx.kind {
-        SelectionKind::Video => run_video(&ctx, &download_dir).await,
-        SelectionKind::Audio => run_audio(&ctx, &download_dir).await,
-    };
+    let result = run_pipeline(&ctx, &download_dir).await;
 
     if let Some(work) = work_dir {
-        let _ = std::fs::remove_dir_all(work);
+        // Never destroy a published artifact: if publishing failed, the mixed
+        // file still lives in the work dir — deleting it would silently lose
+        // the user's download while the UI reported success. On failure the
+        // dir (with the mixed file) is kept and the error surfaces to the UI.
+        let publish_failed = matches!(&result, Err(AppError::Subprocess(msg))
+            if msg.starts_with(PUBLISH_FAILED_PREFIX));
+        if !publish_failed {
+            let _ = std::fs::remove_dir_all(work);
+        }
     }
     result.map(Artifact::into_response)
 }
 
-async fn run_video(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artifact> {
-    let events = &ctx.events;
+/// Unified pipeline: download what the user picked (video or audio), then —
+/// when the mix checkbox is on — fetch the Yandex translation and mix it with
+/// the original audio into the matching container. The mix step is identical
+/// for video and audio; only the downloaded inputs differ slightly.
+async fn run_pipeline(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artifact> {
+    match ctx.kind {
+        SelectionKind::Video => {
+            if !ctx.do_translate {
+                ctx.events.step("Downloading video...");
+                let path = download_stream(ctx, &ctx.format_id, download_dir).await?;
+                return Ok(Artifact::new(path, ArtifactKind::Video));
+            }
 
-    if !ctx.do_translate {
-        // Single combined download — the format ID already carries audio.
-        events.step("Downloading video...");
-        let path = download_stream(ctx, &ctx.format_id, download_dir).await?;
-        return Ok(Artifact::new(path, ArtifactKind::Video));
-    }
+            // Mix path: video stream and audio stream are fetched separately
+            // so ffmpeg can layer original + translation over the video.
+            ctx.events.step("Downloading video...");
+            let video = Artifact::new(
+                download_stream(ctx, &video_only_format(&ctx.format_id), download_dir).await?,
+                ArtifactKind::Video,
+            );
+            ctx.events.step("Downloading audio...");
+            let audio = Artifact::new(
+                download_stream(ctx, "bestaudio[ext=m4a]/bestaudio", download_dir).await?,
+                ArtifactKind::Audio,
+            );
 
-    // Translation path: video stream and audio stream are fetched separately
-    // so the mixer can layer original + translation.
-    events.step("Downloading video...");
-    let video = Artifact::new(
-        download_stream(ctx, &video_only_format(&ctx.format_id), download_dir).await?,
-        ArtifactKind::Video,
-    );
+            let translation = fetch_translation(ctx, download_dir).await?;
+            let Some(translation) = translation else {
+                ctx.events.translation_not_found();
+                // No cached translation on Yandex side — fall back to the
+                // combined format so the user still gets video with audio.
+                let fallback = download_stream(
+                    ctx,
+                    &format_with_best_audio(&ctx.format_id),
+                    &ctx.output_dir,
+                )
+                .await?;
+                return Ok(Artifact::new(fallback, ArtifactKind::Video));
+            };
 
-    events.step("Downloading audio...");
-    let audio = Artifact::new(
-        download_stream(ctx, "bestaudio[ext=m4a]/bestaudio", download_dir).await?,
-        ArtifactKind::Audio,
-    );
-
-    events.step("Getting Yandex voice translation (VOT)...");
-    match crate::translator::fetch_translation(&ctx.url, download_dir, Some(ctx.progress.clone()))
-        .await
-    {
-        Ok(Some(path)) => {
-            let translation = Artifact::new(path, ArtifactKind::Translation);
-            events.translation_complete(&translation.path.to_string_lossy());
-
-            events.step("Mixing audio tracks...");
-            // Write next to the downloaded video (its per-video folder),
-            // not into the root output dir.
+            ctx.events.step("Mixing audio tracks...");
             let mix_dir = video.path.parent().unwrap_or(&ctx.output_dir).to_path_buf();
             let mixed = crate::mixer::mix(
                 &video.path,
@@ -187,36 +196,69 @@ async fn run_video(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artif
                 Some(ctx.progress.clone()),
             )
             .await?;
-            events.mix_complete(&mixed.to_string_lossy());
+            ctx.events.mix_complete(&mixed.to_string_lossy());
 
-            // The per-video folder lives inside the temp work dir during
-            // translation runs; publish it into the user's output dir.
             let published = publish_work_artifact(&mixed, &ctx.output_dir)?;
             Ok(Artifact::new(published, ArtifactKind::Mixed))
         }
-        Ok(None) => {
-            events.translation_not_found();
-            // No cached translation on Yandex side — fall back to the combined
-            // format so the user still gets video with its original audio.
-            let fallback = download_stream(
-                ctx,
-                &format_with_best_audio(&ctx.format_id),
-                &ctx.output_dir,
+        SelectionKind::Audio => {
+            ctx.events.step("Downloading audio...");
+            let audio = Artifact::new(
+                download_stream(ctx, &ctx.format_id, download_dir).await?,
+                ArtifactKind::Audio,
+            );
+
+            if !ctx.do_translate {
+                return Ok(audio);
+            }
+
+            let translation = fetch_translation(ctx, download_dir).await?;
+            let Some(translation) = translation else {
+                ctx.events.translation_not_found();
+                // No cached translation — keep the plain original audio file.
+                let published = publish_work_artifact(&audio.path, &ctx.output_dir)?;
+                return Ok(Artifact::new(published, ArtifactKind::Audio));
+            };
+
+            ctx.events.step("Mixing audio tracks...");
+            let mix_dir = audio.path.parent().unwrap_or(&ctx.output_dir).to_path_buf();
+            let mixed = crate::mixer::mix_audio(
+                &audio.path,
+                &translation.path,
+                &mix_dir,
+                Some(ctx.progress.clone()),
             )
             .await?;
-            Ok(Artifact::new(fallback, ArtifactKind::Video))
-        }
-        Err(error) => {
-            events.translation_error(&error.to_string());
-            Err(error)
+            ctx.events.mix_complete(&mixed.to_string_lossy());
+
+            let published = publish_work_artifact(&mixed, &ctx.output_dir)?;
+            Ok(Artifact::new(published, ArtifactKind::Mixed))
         }
     }
 }
 
-async fn run_audio(ctx: &ProcessContext, download_dir: &Path) -> AppResult<Artifact> {
-    ctx.events.step("Downloading audio...");
-    let path = download_stream(ctx, &ctx.format_id, download_dir).await?;
-    Ok(Artifact::new(path, ArtifactKind::Audio))
+/// Shared step: fetch the Yandex VOT translation into `download_dir`.
+/// Returns `Ok(None)` when Yandex has no cached translation for the video.
+async fn fetch_translation(
+    ctx: &ProcessContext,
+    download_dir: &Path,
+) -> AppResult<Option<Artifact>> {
+    ctx.events.step("Getting Yandex voice translation (VOT)...");
+    match crate::translator::fetch_translation(&ctx.url, download_dir, Some(ctx.progress.clone()))
+        .await
+    {
+        Ok(Some(path)) => {
+            let translation = Artifact::new(path, ArtifactKind::Translation);
+            ctx.events
+                .translation_complete(&translation.path.to_string_lossy());
+            Ok(Some(translation))
+        }
+        Ok(None) => Ok(None),
+        Err(error) => {
+            ctx.events.translation_error(&error.to_string());
+            Err(error)
+        }
+    }
 }
 
 async fn download_stream(ctx: &ProcessContext, format_id: &str, dir: &Path) -> AppResult<PathBuf> {
@@ -244,8 +286,17 @@ fn format_with_best_audio(fid: &str) -> String {
     }
 }
 
+/// Error prefix for publish failures. `run_process` checks for it to decide
+/// whether the work dir may be deleted (a failed publish must NOT trigger
+/// cleanup, or the mixed file would be silently destroyed).
+const PUBLISH_FAILED_PREFIX: &str = "publish failed: ";
+
 /// Move a finished artifact (inside the per-video work folder) into the
 /// user's output dir, relocating the whole folder. Returns the new path.
+///
+/// Falls back to a recursive copy when rename fails (e.g. cross-device), and
+/// verifies the file actually arrived at the destination — a silent loss here
+/// used to delete the only copy during work-dir cleanup.
 fn publish_work_artifact(file: &Path, output_root: &Path) -> AppResult<PathBuf> {
     let folder = file
         .parent()
@@ -254,15 +305,52 @@ fn publish_work_artifact(file: &Path, output_root: &Path) -> AppResult<PathBuf> 
         .file_name()
         .ok_or_else(|| AppError::Subprocess("work folder has invalid name".into()))?;
     let dest = output_root.join(name);
+
     if folder != dest {
-        // Replace any stale folder left by a previous run of the same video.
-        let _ = std::fs::remove_dir_all(&dest);
-        std::fs::rename(folder, &dest).map_err(AppError::Io)?;
+        // Canonical compare guards against same-folder false positives
+        // (e.g. differing path casing/symlinks).
+        let same = match (folder.canonicalize(), dest.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if !same {
+            // Replace any stale folder left by a previous run of the same video.
+            let _ = std::fs::remove_dir_all(&dest);
+            if std::fs::rename(folder, &dest).is_err() {
+                // Cross-device or locked: fall back to copying the folder.
+                copy_dir_recursive(folder, &dest)?;
+            }
+        }
     }
-    Ok(dest.join(
+
+    let final_file = dest.join(
         file.file_name()
             .ok_or_else(|| AppError::Subprocess("artifact has invalid name".into()))?,
-    ))
+    );
+    if !final_file.is_file() {
+        return Err(AppError::Subprocess(format!(
+            "{PUBLISH_FAILED_PREFIX}mixed file missing after publish: {}",
+            final_file.display()
+        )));
+    }
+    Ok(final_file)
+}
+
+/// Recursive directory copy used as fallback when rename fails
+/// (e.g. source and destination on different filesystems).
+fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
+    std::fs::create_dir_all(dst).map_err(AppError::Io)?;
+    for entry in std::fs::read_dir(src).map_err(AppError::Io)? {
+        let entry = entry.map_err(AppError::Io)?;
+        let entry_ty = entry.file_type().map_err(AppError::Io)?;
+        let target = dst.join(entry.file_name());
+        if entry_ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(AppError::Io)?;
+        }
+    }
+    Ok(())
 }
 
 fn create_work_dir(output_dir: &Path) -> AppResult<PathBuf> {
