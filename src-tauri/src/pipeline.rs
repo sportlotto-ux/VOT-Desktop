@@ -118,9 +118,14 @@ impl ProcessResponse {
 pub async fn run_process(ctx: ProcessContext) -> AppResult<ProcessResponse> {
     std::fs::create_dir_all(&ctx.output_dir).map_err(AppError::Io)?;
 
-    // Translation runs use an isolated work dir so partial streams never
-    // leak into the user's output folder; everything else writes in place.
-    let (work_dir, download_dir) = if ctx.do_translate {
+    // Only the video+translation path needs an isolated work dir: mixing
+    // publishes the finished folder out of it before returning. Audio
+    // downloads must go straight to the output dir — a work-dir artifact
+    // would be deleted by the cleanup below while the UI still reports it
+    // as successfully saved (regression: "Видео сохранено" pointing into a
+    // removed .vot-process-* folder).
+    let needs_work_dir = ctx.do_translate && ctx.kind == SelectionKind::Video;
+    let (work_dir, download_dir) = if needs_work_dir {
         let work = create_work_dir(&ctx.output_dir)?;
         (Some(work.clone()), work)
     } else {
@@ -276,7 +281,13 @@ fn create_work_dir(output_dir: &Path) -> AppResult<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_with_best_audio, video_only_format, SelectionKind};
+    use super::{
+        format_with_best_audio, video_only_format, PipelineEvents, ProcessContext, SelectionKind,
+    };
+    use crate::types::ProgressEvent;
+    use std::path::Path;
+    use std::sync::Arc;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn preserves_or_adds_audio_selector() {
@@ -301,5 +312,60 @@ mod tests {
         let audio: SelectionKind = serde_json::from_str("\"audio\"").unwrap();
         assert_eq!(video, SelectionKind::Video);
         assert_eq!(audio, SelectionKind::Audio);
+    }
+
+    // ---- Live regression: audio + do_translate must survive work-dir cleanup ----
+
+    struct NoopEvents;
+
+    impl PipelineEvents for NoopEvents {
+        fn step(&self, _: &str) {}
+        fn translation_complete(&self, _: &str) {}
+        fn translation_not_found(&self) {}
+        fn translation_error(&self, _: &str) {}
+        fn mix_complete(&self, _: &str) {}
+    }
+
+    /// Network-dependent (downloads real audio): run with `cargo test -- --ignored`.
+    /// Regression for the deleted-artifact bug: with `do_translate: true` the
+    /// audio artifact used to be written into the temporary work dir and then
+    /// removed by the cleanup, while the UI reported success.
+    #[tokio::test]
+    #[ignore]
+    async fn audio_with_translate_flag_survives_cleanup() {
+        let out = std::env::temp_dir().join(format!("vot-audio-reg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+
+        let (tx, mut rx) = unbounded_channel::<ProgressEvent>();
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        let ctx = ProcessContext {
+            url: "https://youtube.com/watch?v=jNQXAC9IVRw".into(),
+            format_id: "140".into(),
+            kind: SelectionKind::Audio,
+            output_dir: out.clone(),
+            cookies: None,
+            do_translate: true,
+            progress: tx,
+            events: Arc::new(NoopEvents),
+        };
+
+        let response = super::run_process(ctx)
+            .await
+            .expect("run_process must succeed");
+        let saved = Path::new(&response.video_path).to_path_buf();
+        assert!(
+            saved.is_file(),
+            "artifact must exist on disk after run_process, got: {}",
+            response.video_path
+        );
+        assert!(
+            !saved.to_string_lossy().contains(".vot-process-"),
+            "artifact must not live in the (deleted) work dir: {}",
+            response.video_path
+        );
+
+        let _ = std::fs::remove_dir_all(&out);
     }
 }

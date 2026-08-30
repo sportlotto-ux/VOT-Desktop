@@ -448,11 +448,22 @@ function populateSelectors(formats: Format[]): void {
   renderRadioList($('type-group'), availableTypes.map(t => ({ id: t, label: t })), currentType, () => {
     currentType = getSelectedFromGroup('type-group');
     syncContainerWithType();
+    updateMixAvailability();
     renderQuality();
   });
 
+  updateMixAvailability();
   $<HTMLElement>('format-section').classList.remove('hidden');
   renderQuality();
+}
+
+/** Yandex mix only applies to video downloads — dim the checkbox for Audio. */
+function updateMixAvailability(): void {
+  const box = $<HTMLInputElement>('mix-check');
+  box.disabled = currentType === 'Audio';
+  box.title = box.disabled
+    ? 'Озвучка Яндекса неприменима к аудио-дорожке'
+    : '';
 }
 
 const QUALITY_LEVELS = ['2160p', '1440p', '1080p', '720p', '480p', '360p'];
@@ -672,7 +683,7 @@ async function onProcess(): Promise<void> {
     if (result.mixed_path) {
       showResult(`Видео с переводом сохранено: ${result.mixed_path}`);
     } else {
-      let resultMsg = `Видео сохранено: ${result.video_path}`;
+      let resultMsg = `Файл сохранён: ${result.video_path}`;
       if (result.translation_path) {
         resultMsg += `\nОзвучка: ${result.translation_path}`;
       }
