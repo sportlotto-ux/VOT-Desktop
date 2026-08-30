@@ -94,8 +94,13 @@ async fn download_inner(
 
     // Per-video folder: <output_dir>/<title>_<id>/<title>_<id>.<ext>.
     // yt-dlp creates intermediate directories from the output template.
-    let stem = "%(title).100s_%(id)s";
-    let output_path = output_dir.join(format!("{stem}/{stem}.%(ext)s"));
+    // Per-video folder: <output_dir>/<title>_<id>/<title>_<id>.<ext>.
+    // yt-dlp creates intermediate directories from the output template.
+    // %(title).100B replaces filesystem-hostile characters (NTFS " < > | : ? *
+    // and friends) with safe ones, so the download works even on disks
+    // mounted as NTFS/exFAT via ntfs-3g.
+    let sanitized = "%(title).100B_%(id)s";
+    let output_path = output_dir.join(format!("{sanitized}/{sanitized}.%(ext)s"));
     let started_at = SystemTime::now();
 
     let mut cmd = Command::new(crate::binaries::ensure_ytdlp().await?);
